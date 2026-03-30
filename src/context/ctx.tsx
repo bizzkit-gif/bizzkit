@@ -58,16 +58,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [user])
 
   useEffect(() => {
+    const timeout = setTimeout(() => setLoading(false), 3000)
+
     sb.auth.getSession().then(({ data: { session } }) => {
+      clearTimeout(timeout)
       setUser(session?.user || null)
       setLoading(false)
-    }).catch(() => setLoading(false))
+    }).catch(() => {
+      clearTimeout(timeout)
+      setLoading(false)
+    })
 
     const { data: { subscription } } = sb.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user || null)
       if (!session) setMyBiz(null)
     })
-    return () => subscription.unsubscribe()
+    return () => { subscription.unsubscribe(); clearTimeout(timeout) }
   }, [])
 
   useEffect(() => {

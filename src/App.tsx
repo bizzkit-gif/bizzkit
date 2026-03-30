@@ -28,15 +28,7 @@ export default function App() {
   const viewBiz = (id: string) => { setViewId(id); setPrevTab(tab); setTab('profile') }
   const openChat = (id: string) => { setChatWith(id); setPrevTab(tab); setTab('messages') }
 
-  if (loading) return (
-    <div className="shell">
-      <div className="loading">
-        <div className="loading-logo">bizz<span>kit</span></div>
-        <div className="spinner" />
-      </div>
-    </div>
-  )
-
+  // Always show auth if no user, even during loading
   if (!user) return (
     <div className="shell">
       <div className="screen-area">
