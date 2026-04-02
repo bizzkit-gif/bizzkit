@@ -1,9 +1,10 @@
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 html,body,#root{height:100%;overflow:hidden;background:#060E1C;}
-body{font-family:'DM Sans',sans-serif;color:#fff;display:flex;align-items:center;justify-content:center;background:#060E1C;min-height:100vh;}
+body{font-family:'DM Sans',sans-serif;color:#fff;display:flex;align-items:center;justify-content:center;background:#060E1C;}
 input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance:none;appearance:none;}
 
-.shell{width:100vw;max-width:430px;min-width:320px;height:100%;display:flex;flex-direction:column;background:#0A1628;position:relative;overflow:hidden;}.sbar{height:50px;min-height:50px;background:#0A1628;display:flex;align-items:flex-end;justify-content:space-between;padding:0 20px 8px;flex-shrink:0;}
+.shell{width:430px;min-width:430px;max-width:430px;height:100%;display:flex;flex-direction:column;background:#0A1628;position:relative;overflow:hidden;}
+.sbar{height:50px;min-height:50px;background:#0A1628;display:flex;align-items:flex-end;justify-content:space-between;padding:0 20px 8px;flex-shrink:0;}
 .sbar-t{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;}
 .sbar-r{font-size:11px;font-weight:600;display:flex;gap:4px;}
 .screen-area{flex:1;overflow:hidden;position:relative;}
@@ -86,3 +87,13 @@ input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance
 .call-end{background:#FF4B6E;}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,107,53,.35)}50%{box-shadow:0 0 0 10px rgba(255,107,53,0)}}
 .pulse{animation:pulse 2s infinite;}
+
+/* ── Android PWA fixes ─────────────────────────── */
+@media screen and (display-mode: standalone) {
+  .shell { height: 100vh; height: 100dvh; }
+  .bnav { padding-bottom: env(safe-area-inset-bottom, 8px); height: auto; min-height: 70px; }
+}
+html { height: 100%; height: 100dvh; }
+body { height: 100%; height: 100dvh; }
+#root { height: 100%; height: 100dvh; }
+.shell { height: 100vh; height: 100dvh; }

@@ -36,7 +36,7 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
 
   return (
     <div style={{ paddingBottom:16 }}>
-      <div className={grad(biz.id)} style={{ height:170, position:'relative' }}>
+      <div className={grad(biz.id)} style={{ height:120, position:'relative', flexShrink:0 }}>
         {onBack && <button onClick={onBack} style={{ position:'absolute', top:14, left:14, width:34, height:34, borderRadius:10, background:'rgba(0,0,0,0.35)', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>}
         {isOwn && <button onClick={() => setEditing(true)} style={{ position:'absolute', top:14, right:14, padding:'6px 13px', borderRadius:10, background:'rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>}
       </div>
@@ -73,7 +73,7 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
       <div style={{ display:'flex', borderBottom:'1px solid rgba(255,255,255,0.07)', margin:'0 0 14px' }}>
         {(['products','about'] as const).map(t => (
           <div key={t} onClick={() => setTab(t)} style={{ flex:1, textAlign:'center', padding:'9px 4px', fontSize:12, fontWeight:600, cursor:'pointer', color:tab===t?'#1E7EF7':'#7A92B0', borderBottom:`2px solid ${tab===t?'#1E7EF7':'transparent'}` }}>
-            {t.charAt(0).toUpperCase()+t.slice(1)}
+            {t === 'products' ? 'Products & Services' : t.charAt(0).toUpperCase()+t.slice(1)}
           </div>
         ))}
       </div>
@@ -81,7 +81,7 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:9, padding:'0 16px' }}>
           {(biz.products||[]).length === 0 && (
             <div style={{ gridColumn:'1/-1', textAlign:'center', padding:'30px 0', color:'#7A92B0', fontSize:13 }}>
-              {isOwn ? <button className="btn btn-accent btn-sm" onClick={() => setEditing(true)}>+ Add products</button> : 'No products listed'}
+              {isOwn ? <button className="btn btn-accent btn-sm" onClick={() => setEditing(true)}>+ Add Products / Services</button> : 'No products listed'}
             </div>
           )}
           {(biz.products||[]).map(p => (
@@ -217,7 +217,7 @@ function BizForm({ existing, onSaved, onCancel }: { existing?:Business; onSaved:
           ))}
           {products.length === 0 && <div style={{ textAlign:'center', color:'#7A92B0', fontSize:13, padding:'16px 0' }}>No products yet</div>}
           <div style={{ background:'#1A2D47', borderRadius:13, padding:13, border:'1px solid rgba(255,255,255,0.07)', marginBottom:14 }}>
-            <div style={{ fontFamily:'Syne, sans-serif', fontWeight:700, fontSize:13, marginBottom:10 }}>Add a Product</div>
+            <div style={{ fontFamily:'Syne, sans-serif', fontWeight:700, fontSize:13, marginBottom:10 }}>Add a Product / Service</div>
             <div style={{ display:'flex', gap:5, flexWrap:'wrap', marginBottom:10 }}>
               {EMOJIS.map(em => <div key={em} onClick={() => setPEmoji(em)} style={{ width:34, height:34, borderRadius:9, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, cursor:'pointer', background:pEmoji===em?'#1E7EF7':'#152236', border:`1px solid ${pEmoji===em?'#1E7EF7':'rgba(255,255,255,0.07)'}` }}>{em}</div>)}
             </div>
@@ -338,7 +338,7 @@ function ConfCard({ c, myBizId, joined, onJoin, onLeave }: any) {
       <div style={{ padding:'0 13px 12px', display:'flex', gap:7 }}>
         {!joined && !isMine && <button className="btn btn-blue btn-full btn-sm" onClick={onJoin}>Join — {spots} spots left</button>}
         {joined && !isMine && <><button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onLeave}>Leave</button><button className="btn btn-blue btn-sm" style={{ flex:2 }}>View Details</button></>}
-        {isMine && <button className="btn btn-ghost btn-full btn-sm">Manage Conference</button>}
+        {isMine && <button className="btn btn-ghost btn-full btn-sm" onClick={() => alert('Conference management: Edit details, view attendees, and cancel in the full version.')}>Manage Conference</button>}
       </div>
     </div>
   )

@@ -111,19 +111,10 @@ function ChatView({ chatId, other, myId, onBack, toast }: { chatId:string; other
   }
 
   const startCall = async () => {
-    try {
-      const roomName = 'bizzkit-' + chatId.slice(0,8) + '-' + Date.now()
-      const apiKey = import.meta.env.VITE_DAILY_API_KEY
-      if (!apiKey) { toast('Daily.co not configured', 'error'); return }
-      const res = await fetch('https://api.daily.co/v1/rooms', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+apiKey },
-        body: JSON.stringify({ name:roomName, properties:{ exp: Math.floor(Date.now()/1000)+3600 } })
-      })
-      const room = await res.json()
-      await sb.from('call_rooms').insert({ chat_id:chatId, room_url:room.url, room_name:room.name, created_by:myId })
-      setCallUrl(room.url)
-    } catch { toast('Could not start call', 'error') }
+    // Use Jitsi Meet - free, no API key needed
+    const roomName = 'bizzkit-' + chatId.replace(/-/g,'').slice(0,12)
+    const url = 'https://meet.jit.si/' + roomName
+    setCallUrl(url)
   }
 
   const QUICK = ["👋 Hello!", "Let's connect", "Request a quote?", "Schedule a call?"]

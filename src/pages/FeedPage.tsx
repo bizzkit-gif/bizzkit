@@ -58,7 +58,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       <div className="topbar">
         <div className="logo-txt">bizz<span>kit</span></div>
         <div style={{ display:'flex', gap:7 }}>
-          <div className="icon-btn">🔔</div>
+          <div className="icon-btn" onClick={() => toast('No new notifications', 'info')}>🔔</div>
           {myBiz && <div className="avatar-btn">{myBiz.logo.slice(0,2)}</div>}
         </div>
       </div>
