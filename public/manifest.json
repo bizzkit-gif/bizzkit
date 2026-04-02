@@ -3,15 +3,24 @@
   "short_name": "Bizzkit",
   "description": "The Business Showcase & Networking Platform",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#060E1C",
   "theme_color": "#0A1628",
-  "orientation": "portrait",
+  "orientation": "portrait-primary",
+  "categories": ["business", "networking"],
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' fill='%230A1628'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' font-size='100' fill='%231E7EF7'>B</text></svg>",
+      "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
