@@ -1,7 +1,7 @@
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#060E1C;}
-body{font-family:'DM Sans',sans-serif;color:#fff;display:flex;align-items:flex-start;justify-content:center;background:#060E1C;}
-#root{width:100%;height:100%;display:flex;align-items:flex-start;justify-content:center;}
+html{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#060E1C;}
+body{margin:0;padding:0;width:100%;height:100%;font-family:'DM Sans',sans-serif;color:#fff;display:flex;align-items:stretch;justify-content:center;background:#060E1C;overflow:hidden;}
+#root{width:100%;height:100%;display:flex;align-items:stretch;justify-content:center;}
 input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance:none;appearance:none;}
 
 .shell{
