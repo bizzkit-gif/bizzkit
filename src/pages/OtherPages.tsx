@@ -36,10 +36,16 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
 
   return (
     <div style={{ paddingBottom:16 }}>
-      <div className={grad(biz.id)} style={{ height:140, position:'relative', flexShrink:0, marginTop:0 }}>
-        {onBack && <button onClick={onBack} style={{ position:'absolute', top:14, left:14, width:34, height:34, borderRadius:10, background:'rgba(0,0,0,0.35)', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>}
-        {isOwn && <button onClick={() => setEditing(true)} style={{ position:'absolute', top:14, right:14, padding:'6px 13px', borderRadius:10, background:'rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>}
+      <div className={grad(biz.id)} style={{ height:130, position:'relative', flexShrink:0 }}>
+        {onBack && (
+          <button onClick={onBack} style={{ position:'absolute', top:12, left:14, width:32, height:32, borderRadius:10, background:'rgba(0,0,0,0.35)', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>
+        )}
       </div>
+      {isOwn && (
+        <div style={{ position:'absolute', top:8, right:14, zIndex:10 }}>
+          <button onClick={() => setEditing(true)} style={{ padding:'6px 13px', borderRadius:10, background:'rgba(10,22,40,0.85)', border:'1px solid rgba(255,255,255,0.15)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>
+        </div>
+      )}
       <div style={{ padding:'0 16px' }}>
         <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:-40, padding:'0 16px' }}>
           <div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }}>{biz.logo}</div>
