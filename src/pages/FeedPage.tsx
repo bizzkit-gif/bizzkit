@@ -81,6 +81,38 @@ const markAllRead = async () => {
 
   return (
     <div style={{ paddingBottom:16 }}>
+      {showNotifs && (
+        <div style={{ position:'absolute', inset:0, background:'rgba(0,0,0,0.7)', zIndex:400 }} onClick={() => setShowNotifs(false)}>
+          <div style={{ position:'absolute', top:0, left:0, right:0, background:'#0A1628', borderBottom:'1px solid rgba(255,255,255,0.07)', maxHeight:'70%', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 18px 10px' }}>
+              <div style={{ fontFamily:'Syne, sans-serif', fontSize:17, fontWeight:800 }}>Notifications</div>
+              <div style={{ display:'flex', gap:12, alignItems:'center' }}>
+                {unreadNotifs > 0 && <span onClick={markAllRead} style={{ fontSize:11, color:'#1E7EF7', fontWeight:700, cursor:'pointer' }}>Mark all read</span>}
+                <span onClick={() => setShowNotifs(false)} style={{ fontSize:22, color:'#7A92B0', cursor:'pointer' }}>×</span>
+              </div>
+            </div>
+            {notifs.length === 0 && (
+              <div style={{ padding:'40px 20px', textAlign:'center', color:'#7A92B0', fontSize:13 }}>
+                <div style={{ fontSize:32, marginBottom:10 }}>🔔</div>
+                No notifications yet
+              </div>
+            )}
+            {notifs.map(n => (
+              <div key={n.id} style={{ padding:'12px 18px', borderBottom:'1px solid rgba(255,255,255,0.07)', background:n.read?'transparent':'rgba(30,126,247,0.06)', display:'flex', gap:12, alignItems:'flex-start' }}>
+                <div style={{ width:36, height:36, borderRadius:10, background:'rgba(30,126,247,0.15)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, flexShrink:0 }}>
+                  {n.type === 'connection' ? '🤝' : n.type === 'message' ? '💬' : n.type === 'rfq' ? '📋' : '🔔'}
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:'#fff', marginBottom:2 }}>{n.title}</div>
+                  <div style={{ fontSize:11.5, color:'#7A92B0' }}>{n.body}</div>
+                  <div style={{ fontSize:10, color:'#3A5070', marginTop:3 }}>{new Date(n.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}</div>
+                </div>
+                {!n.read && <div style={{ width:8, height:8, borderRadius:'50%', background:'#1E7EF7', flexShrink:0, marginTop:4 }} />}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="topbar">
         <div className="logo-txt">bizz<span>kit</span></div>
         <div style={{ display:'flex', gap:7 }}>
