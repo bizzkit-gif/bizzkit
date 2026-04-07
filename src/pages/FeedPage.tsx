@@ -134,7 +134,7 @@ const markAllRead = async () => {
 
       <div className="search-wrap">
         <span style={{ fontSize:15, color:'#7A92B0' }}>🔍</span>
-        <input placeholder="Search businesses…" value={search} onChange={e => setSearch(e.target.value)} />
+        <input placeholder="Search by name, industry, city..." value={search} onChange={e => setSearch(e.target.value)} />
         {search && <span style={{ cursor:'pointer', color:'#7A92B0', fontSize:18 }} onClick={() => setSearch('')}>×</span>}
       </div>
 
