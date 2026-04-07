@@ -35,17 +35,17 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
   if (!biz) return <div style={{ padding:'80px 20px', textAlign:'center', color:'#7A92B0' }}>Business not found</div>
 
   return (
-    <div style={{ paddingBottom:16 }}>
+  <div style={{ paddingBottom:16 }}>
       <div className={grad(biz.id)} style={{ height:130, position:'relative', flexShrink:0 }}>
         {onBack && (
           <button onClick={onBack} style={{ position:'absolute', top:12, left:14, width:32, height:32, borderRadius:10, background:'rgba(0,0,0,0.35)', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>
         )}
+        {isOwn && (
+          <button onClick={() => setEditing(true)} style={{ position:'absolute', top:12, right:14, padding:'6px 13px', borderRadius:10, background:'rgba(0,0,0,0.5)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>
+        )}
       </div>
-      {isOwn && (
-        <button onClick={() => setEditing(true)} style={{ position:'absolute', top:10, right:14, zIndex:10, padding:'6px 13px', borderRadius:10, background:'rgba(10,22,40,0.85)', border:'1px solid rgba(255,255,255,0.15)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>
-      )}
       <div style={{ padding:'0 16px' }}>
-        <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:-40, padding:'0 16px' }}>
+        <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:-34 }}>
           <div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }}>{biz.logo}</div>
           {isOwn && <span style={{ fontSize:11, color:'#1E7EF7', fontWeight:700, cursor:'pointer', marginBottom:4 }} onClick={onTrust}>Trust Score →</span>}
         </div>
