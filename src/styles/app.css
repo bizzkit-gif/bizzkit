@@ -15,7 +15,7 @@ input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance
 .screen::-webkit-scrollbar{display:none;}
 @keyframes fi{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}
 
-.bnav{flex-shrink:0;height:70px;background:rgba(8,18,36,0.97);border-top:1px solid rgba(255,255,255,0.07);display:flex;align-items:flex-start;justify-content:space-around;padding:8px 0 0;padding-bottom:env(safe-area-inset-bottom,0px);}
+.bnav{flex-shrink:0;height:auto;min-height:60px;padding-top:8px;padding-bottom:max(12px,env(safe-area-inset-bottom));background:rgba(8,18,36,0.97);border-top:1px solid rgba(255,255,255,0.07);display:flex;align-items:flex-start;justify-content:space-around;}
 .bni{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;cursor:pointer;padding:2px;}
 .bni-ico{width:44px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;position:relative;transition:background .2s;}
 .bni.on .bni-ico{background:#1E7EF7;}
