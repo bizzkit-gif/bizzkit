@@ -36,7 +36,7 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
 
   return (
     <div style={{ paddingBottom:16 }}>
-      <div className={grad(biz.id)} style={{ height:0, position:'relative', overflow:'hidden' }}>
+      <div className={grad(biz.id)} style={{ height:140, position:'relative', flexShrink:0, marginTop:0 }}>
         {onBack && <button onClick={onBack} style={{ position:'absolute', top:14, left:14, width:34, height:34, borderRadius:10, background:'rgba(0,0,0,0.35)', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>}
         {isOwn && <button onClick={() => setEditing(true)} style={{ position:'absolute', top:14, right:14, padding:'6px 13px', borderRadius:10, background:'rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>}
       </div>
