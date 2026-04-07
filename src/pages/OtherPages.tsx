@@ -42,9 +42,7 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
         )}
       </div>
       {isOwn && (
-        <div style={{ position:'absolute', top:8, right:14, zIndex:10 }}>
-          <button onClick={() => setEditing(true)} style={{ padding:'6px 13px', borderRadius:10, background:'rgba(10,22,40,0.85)', border:'1px solid rgba(255,255,255,0.15)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>
-        </div>
+        <button onClick={() => setEditing(true)} style={{ position:'absolute', top:10, right:14, zIndex:10, padding:'6px 13px', borderRadius:10, background:'rgba(10,22,40,0.85)', border:'1px solid rgba(255,255,255,0.15)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>
       )}
       <div style={{ padding:'0 16px' }}>
         <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:-40, padding:'0 16px' }}>
