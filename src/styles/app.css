@@ -1,5 +1,7 @@
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-html,body,#root{height:100%;overflow:hidden;background:#060E1C;}
+html,body,#root{height:100%;min-height:100%;overflow:hidden;background:#060E1C;}
+html{height:-webkit-fill-available;}
+body{min-height:-webkit-fill-available;}
 body{font-family:'DM Sans',sans-serif;color:#fff;display:flex;align-items:center;justify-content:center;background:#060E1C;}
 #root{width:100%;}
 input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance:none;appearance:none;}
