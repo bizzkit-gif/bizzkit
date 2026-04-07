@@ -41,7 +41,7 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
         {isOwn && <button onClick={() => setEditing(true)} style={{ position:'absolute', top:14, right:14, padding:'6px 13px', borderRadius:10, background:'rgba(0,0,0,0.4)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>}
       </div>
       <div style={{ padding:'0 16px' }}>
-        <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:-34 }}>
+        <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:-40, padding:'0 16px' }}>
           <div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }}>{biz.logo}</div>
           {isOwn && <span style={{ fontSize:11, color:'#1E7EF7', fontWeight:700, cursor:'pointer', marginBottom:4 }} onClick={onTrust}>Trust Score →</span>}
         </div>
