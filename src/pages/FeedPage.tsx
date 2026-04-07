@@ -48,7 +48,15 @@ const markAllRead = async () => {
 
   const items = list.filter(b => {
     const mf = filter === 'All' || b.industry === filter
-    const ms = !search || b.name.toLowerCase().includes(search.toLowerCase())
+    const s = search.toLowerCase()
+    const ms = !search || 
+      b.name.toLowerCase().includes(s) ||
+      b.industry.toLowerCase().includes(s) ||
+      b.city.toLowerCase().includes(s) ||
+      b.country.toLowerCase().includes(s) ||
+      b.tagline?.toLowerCase().includes(s) ||
+      b.type?.toLowerCase().includes(s) ||
+      b.products?.some(p => p.name.toLowerCase().includes(s))
     return mf && ms
   })
 
