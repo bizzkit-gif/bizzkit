@@ -41,7 +41,7 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
           <button onClick={onBack} style={{ position:'absolute', top:12, left:14, width:32, height:32, borderRadius:10, background:'rgba(0,0,0,0.35)', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>
         )}
         {isOwn && (
-          <button onClick={() => setEditing(true)} style={{ position:'absolute', top:12, right:14, padding:'6px 13px', borderRadius:10, background:'rgba(30,126,247,0.3)', border:'1px solid rgba(30,126,247,0.4)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>
+          <button onClick={() => setEditing(true)} style={{ position:'absolute', top:12, right:14, padding:'8px 16px', borderRadius:10, background:'rgba(0,0,0,0.6)', border:'1px solid rgba(255,255,255,0.25)', color:'#fff', fontSize:12, fontWeight:700, cursor:'pointer', WebkitAppearance:'none', zIndex:50, minWidth:70, minHeight:36 }}>✏️ Edit</button>
         )}
       </div>
       <div style={{ padding:'0 16px' }}>
