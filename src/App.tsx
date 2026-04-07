@@ -29,8 +29,18 @@ export default function App() {
   const openChat = (id: string) => { setChatWith(id); setPrevTab(tab); setTab('messages') }
 
   // Always show auth if no user, even during loading
+ const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
+  const isStandalone = (window.navigator as any).standalone
+  const [showBanner, setShowBanner] = React.useState(isIOS && !isStandalone)
+
   if (!user) return (
     <div className="shell">
+      {showBanner && (
+        <div style={{ background:'#1E7EF7', padding:'10px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
+          <div style={{ fontSize:12, color:'#fff', fontWeight:600 }}>📲 Add to Home Screen for best experience</div>
+          <span onClick={() => setShowBanner(false)} style={{ color:'#fff', fontSize:18, cursor:'pointer' }}>×</span>
+        </div>
+      )}
       <div className="screen-area">
         <div className="screen"><AuthPage /></div>
       </div>
