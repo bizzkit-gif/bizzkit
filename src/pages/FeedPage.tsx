@@ -58,7 +58,10 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       <div className="topbar">
         <div className="logo-txt">bizz<span>kit</span></div>
         <div style={{ display:'flex', gap:7 }}>
-          <div className="icon-btn" onClick={() => toast('No new notifications', 'info')}>🔔</div>
+          <div className="icon-btn" style={{ position:'relative' }} onClick={() => setShowNotifs(true)}>
+  🔔
+  {unreadNotifs > 0 && <div style={{ position:'absolute', top:-3, right:-3, width:15, height:15, background:'#FF4B6E', borderRadius:'50%', fontSize:8, fontWeight:800, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', border:'2px solid #0A1628' }}>{unreadNotifs}</div>}
+</div>
           {myBiz && <div className="avatar-btn">{myBiz.logo.slice(0,2)}</div>}
         </div>
       </div>
