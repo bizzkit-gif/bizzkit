@@ -10,6 +10,32 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [conns, setConns] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+const [showNotifs, setShowNotifs] = useState(false)
+const [notifs, setNotifs] = useState<any[]>([])
+const [unreadNotifs, setUnreadNotifs] = useState(0)
+
+useEffect(() => {
+  if (!user) return
+  sb.from('notifications').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(20)
+    .then(({ data }) => {
+      setNotifs(data || [])
+      setUnreadNotifs((data || []).filter((n: any) => !n.read).length)
+    })
+  const ch = sb.channel('notifs-' + user.id)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: 'user_id=eq.' + user.id },
+      payload => {
+        setNotifs(p => [payload.new, ...p])
+        setUnreadNotifs(n => n + 1)
+      })
+    .subscribe()
+  return () => { sb.removeChannel(ch) }
+}, [user?.id])
+
+const markAllRead = async () => {
+  await sb.from('notifications').update({ read: true }).eq('user_id', user.id).eq('read', false)
+  setNotifs(p => p.map(n => ({ ...n, read: true })))
+  setUnreadNotifs(0)
+}
 
   useEffect(() => {
     sb.from('businesses').select('*,products(*)').order('trust_score', { ascending: false })
