@@ -36,17 +36,21 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
 
   return (
   <div style={{ paddingBottom:16 }}>
-      <div className={grad(biz.id)} style={{ height:130, position:'relative', flexShrink:0 }}>
+      <div style={{ height:120, background:'linear-gradient(135deg,#0C2340,#1A3D6E)', position:'relative', flexShrink:0, display:'flex', alignItems:'flex-end', padding:'0 16px 0' }}>
         {onBack && (
           <button onClick={onBack} style={{ position:'absolute', top:12, left:14, width:32, height:32, borderRadius:10, background:'rgba(0,0,0,0.35)', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>
         )}
         {isOwn && (
-          <button onClick={() => setEditing(true)} style={{ position:'absolute', top:12, right:14, padding:'6px 13px', borderRadius:10, background:'rgba(0,0,0,0.5)', border:'1px solid rgba(255,255,255,0.2)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>
+          <button onClick={() => setEditing(true)} style={{ position:'absolute', top:12, right:14, padding:'6px 13px', borderRadius:10, background:'rgba(30,126,247,0.3)', border:'1px solid rgba(30,126,247,0.4)', color:'#fff', fontSize:11.5, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>
         )}
       </div>
       <div style={{ padding:'0 16px' }}>
         <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:-34 }}>
-          <div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }}>{biz.logo}</div>
+          {biz.logo_url ? (
+            <img src={biz.logo_url} alt={biz.name} style={{ width:68, height:68, borderRadius:17, objectFit:'cover', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }} />
+          ) : (
+            <div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }}>{biz.logo}</div>
+          )}
           {isOwn && <span style={{ fontSize:11, color:'#1E7EF7', fontWeight:700, cursor:'pointer', marginBottom:4 }} onClick={onTrust}>Trust Score →</span>}
         </div>
         <div style={{ marginTop:9 }}>
