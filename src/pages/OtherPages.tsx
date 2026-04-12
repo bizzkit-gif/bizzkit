@@ -16,6 +16,12 @@ const [tab, setTab] = useState<'products'|'posts'|'about'>('products')
 const [editing, setEditing] = useState(false)
 const [isConn, setIsConn] = useState(false)
 const [loading, setLoading] = useState(true)
+const [bizPosts, setBizPosts] = useState<any[]>([])
+const [postContent, setPostContent] = useState('')
+const [postMedia, setPostMedia] = useState('')
+const [postMediaType, setPostMediaType] = useState('')
+const [posting, setPosting] = useState(false)
+const [postUploading, setPostUploading] = useState(false)
 
 useEffect(() => {
 if (isOwn) { setBiz(myBiz); setLoading(false); return }
@@ -36,13 +42,6 @@ if (loading) return <div style={{ display:'flex', justifyContent:'center', paddi
 if (editing && isOwn) return <BizForm existing={biz||undefined} onSaved={async () => { setEditing(false); await refreshBiz(); setBiz(myBiz); toast(biz?'Profile updated!':'Profile created!') }} onCancel={() => setEditing(false)} />
 if (isOwn && !myBiz) return <BizForm onSaved={async () => { await refreshBiz(); toast('Profile created!') }} />
 if (!biz) return <div style={{ padding:'80px 20px', textAlign:'center', color:'#7A92B0' }}>Business not found</div>
-
-  const [bizPosts, setBizPosts] = React.useState<any[]>([])
-  const [postContent, setPostContent] = React.useState('')
-  const [postMedia, setPostMedia] = React.useState('')
-  const [postMediaType, setPostMediaType] = React.useState('')
-  const [posting, setPosting] = React.useState(false)
-  const [postUploading, setPostUploading] = React.useState(false)
 
   const handlePostMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
