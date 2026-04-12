@@ -49,7 +49,7 @@ export default function App() {
 
   return (
     <div className="shell">
-      <div className="sbar">
+      <div className="sbar" style={{ display:"none" }}>
         <div className="sbar-t">{time}</div>
         <div className="sbar-r"><span>WiFi</span><span>100%</span></div>
       </div>
