@@ -10,45 +10,9 @@ const { user, myBiz, refreshBiz, toast } = useApp()
 const isOwn = !viewId || viewId === myBiz?.id
 const [biz, setBiz] = useState<Business|null>(null)
 const [tab, setTab] = useState<'products'|'posts'|'about'>('products')
-  const [bizPosts, setBizPosts] = useState<any[]>([])
-  const [postContent, setPostContent] = useState('')
-  const [postMedia, setPostMedia] = useState('')
-  const [postMediaType, setPostMediaType] = useState('')
-  const [posting, setPosting] = useState(false)
-  const [postUploading, setPostUploading] = useState(false)
 
-  useEffect(() => {
-    if (!biz?.id) return
-    sb.from('posts').select('*').eq('business_id', biz.id).order('created_at', { ascending:false }).then(({ data }) => setBizPosts(data||[]))
-  }, [biz?.id, tab])
 
-  const handlePostMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setPostUploading(true)
-    const folder = file.type.startsWith('video/') ? 'videos' : 'posts'
-    const url = await uploadImage(file, folder)
-    if (url) { setPostMedia(url); setPostMediaType(file.type.startsWith('video/') ? 'video' : 'image') }
-    setPostUploading(false)
-  }
 
-  const submitPost = async () => {
-    if (!postContent.trim()) { toast('Write something first', 'error'); return }
-    if (!myBiz) { toast('Create a business profile first', 'info'); return }
-    setPosting(true)
-    const { error } = await sb.from('posts').insert({ business_id:myBiz.id, content:postContent.trim(), media_url:postMedia||null, media_type:postMediaType||null })
-    if (error) { toast('Failed to post: ' + error.message, 'error'); setPosting(false); return }
-    setPostContent(''); setPostMedia(''); setPostMediaType('')
-    const { data } = await sb.from('posts').select('*').eq('business_id', myBiz.id).order('created_at', { ascending:false })
-    setBizPosts(data||[])
-    setPosting(false)
-    toast('Posted!')
-  }
-
-  const deletePost = async (postId: string) => {
-    await sb.from('posts').delete().eq('id', postId)
-    setBizPosts((p:any[]) => p.filter((pp:any) => pp.id !== postId))
-  }
 const [editing, setEditing] = useState(false)
 const [isConn, setIsConn] = useState(false)
 const [loading, setLoading] = useState(true)
@@ -72,6 +36,40 @@ if (loading) return <div style={{ display:'flex', justifyContent:'center', paddi
 if (editing && isOwn) return <BizForm existing={biz||undefined} onSaved={async () => { setEditing(false); await refreshBiz(); setBiz(myBiz); toast(biz?'Profile updated!':'Profile created!') }} onCancel={() => setEditing(false)} />
 if (isOwn && !myBiz) return <BizForm onSaved={async () => { await refreshBiz(); toast('Profile created!') }} />
 if (!biz) return <div style={{ padding:'80px 20px', textAlign:'center', color:'#7A92B0' }}>Business not found</div>
+
+  const [bizPosts, setBizPosts] = React.useState<any[]>([])
+  const [postContent, setPostContent] = React.useState('')
+  const [postMedia, setPostMedia] = React.useState('')
+  const [postMediaType, setPostMediaType] = React.useState('')
+  const [posting, setPosting] = React.useState(false)
+  const [postUploading, setPostUploading] = React.useState(false)
+
+  const handlePostMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPostUploading(true)
+    const folder = file.type.startsWith('video/') ? 'videos' : 'posts'
+    const url = await uploadImage(file, folder)
+    if (url) { setPostMedia(url); setPostMediaType(file.type.startsWith('video/') ? 'video' : 'image') }
+    setPostUploading(false)
+  }
+
+  const submitPost = async () => {
+    if (!postContent.trim()) { toast('Write something first', 'error'); return }
+    if (!myBiz) { toast('Create a business profile first', 'info'); return }
+    setPosting(true)
+    const { error } = await sb.from('posts').insert({ business_id:myBiz.id, content:postContent.trim(), media_url:postMedia||null, media_type:postMediaType||null })
+    if (error) { toast('Failed to post: ' + error.message, 'error'); setPosting(false); return }
+    setPostContent(''); setPostMedia(''); setPostMediaType('')
+    sb.from('posts').select('*').eq('business_id', myBiz.id).order('created_at', { ascending:false }).then(({ data }) => setBizPosts(data||[]))
+    setPosting(false)
+    toast('Posted!')
+  }
+
+  const deletePost = async (postId: string) => {
+    await sb.from('posts').delete().eq('id', postId)
+    setBizPosts((p:any[]) => p.filter((pp:any) => pp.id !== postId))
+  }
 
 return (
 <div style={{ paddingBottom:16 }}>
