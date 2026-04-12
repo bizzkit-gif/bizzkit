@@ -46,9 +46,7 @@ return (
         {onBack && <button onClick={onBack} style={{ width:32, height:32, borderRadius:10, background:'#152236', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>}
         {isOwn && <button onClick={() => setEditing(true)} style={{ marginLeft:'auto', padding:'8px 16px', borderRadius:10, background:'#152236', border:'1px solid rgba(255,255,255,0.1)', color:'#fff', fontSize:12, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>}
       </div>
-)}
-</div>
-<div style={{ padding:'0 16px' }}>
+      <div style={{ padding:'0 16px' }}>
 <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:12 }}>
 {biz.logo_url ? (
 <img src={biz.logo_url} alt={biz.name} style={{ width:68, height:68, borderRadius:17, objectFit:'cover' as const, border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }} />
