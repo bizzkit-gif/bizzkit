@@ -33,13 +33,16 @@ const [tab, setTab] = useState<'products'|'posts'|'about'>('products')
   }
 
   const submitPost = async () => {
-    if (!postContent.trim() || !myBiz) return
+    if (!postContent.trim()) { toast('Write something first', 'error'); return }
+    if (!myBiz) { toast('Create a business profile first', 'info'); return }
     setPosting(true)
-    await sb.from('posts').insert({ business_id:myBiz.id, content:postContent.trim(), media_url:postMedia||null, media_type:postMediaType||null })
+    const { error } = await sb.from('posts').insert({ business_id:myBiz.id, content:postContent.trim(), media_url:postMedia||null, media_type:postMediaType||null })
+    if (error) { toast('Failed to post: ' + error.message, 'error'); setPosting(false); return }
     setPostContent(''); setPostMedia(''); setPostMediaType('')
     const { data } = await sb.from('posts').select('*').eq('business_id', myBiz.id).order('created_at', { ascending:false })
     setBizPosts(data||[])
     setPosting(false)
+    toast('Posted!')
   }
 
   const deletePost = async (postId: string) => {
