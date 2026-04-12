@@ -16,6 +16,36 @@ const [tab, setTab] = useState<'products'|'posts'|'about'>('products')
   const [postMediaType, setPostMediaType] = useState('')
   const [posting, setPosting] = useState(false)
   const [postUploading, setPostUploading] = useState(false)
+
+  useEffect(() => {
+    if (!biz?.id) return
+    sb.from('posts').select('*').eq('business_id', biz.id).order('created_at', { ascending:false }).then(({ data }) => setBizPosts(data||[]))
+  }, [biz?.id, tab])
+
+  const handlePostMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPostUploading(true)
+    const folder = file.type.startsWith('video/') ? 'videos' : 'posts'
+    const url = await uploadImage(file, folder)
+    if (url) { setPostMedia(url); setPostMediaType(file.type.startsWith('video/') ? 'video' : 'image') }
+    setPostUploading(false)
+  }
+
+  const submitPost = async () => {
+    if (!postContent.trim() || !myBiz) return
+    setPosting(true)
+    await sb.from('posts').insert({ business_id:myBiz.id, content:postContent.trim(), media_url:postMedia||null, media_type:postMediaType||null })
+    setPostContent(''); setPostMedia(''); setPostMediaType('')
+    const { data } = await sb.from('posts').select('*').eq('business_id', myBiz.id).order('created_at', { ascending:false })
+    setBizPosts(data||[])
+    setPosting(false)
+  }
+
+  const deletePost = async (postId: string) => {
+    await sb.from('posts').delete().eq('id', postId)
+    setBizPosts((p:any[]) => p.filter((pp:any) => pp.id !== postId))
+  }
 const [editing, setEditing] = useState(false)
 const [isConn, setIsConn] = useState(false)
 const [loading, setLoading] = useState(true)
@@ -107,6 +137,53 @@ return (
 ))}
 </div>
 )}
+
+      {tab === 'posts' && (
+        <div style={{ padding:'0 16px' }}>
+          {isOwn && (
+            <div style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.07)', marginBottom:14 }}>
+              <textarea placeholder="Share an update about your business..." value={postContent} onChange={e => setPostContent(e.target.value)} style={{ width:'100%', background:'none', border:'none', outline:'none', color:'#fff', fontSize:13, resize:'none', minHeight:70, fontFamily:'DM Sans, sans-serif' }} />
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:8, borderTop:'1px solid rgba(255,255,255,0.07)', paddingTop:8 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                  {postMedia && (postMediaType === 'video' ? <video src={postMedia} style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} /> : <img src={postMedia} alt="preview" style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} />)}
+                  <label style={{ padding:'6px 12px', borderRadius:9, background:'#0A1628', border:'1px solid rgba(255,255,255,0.07)', fontSize:11.5, color:'#7A92B0', cursor:'pointer', fontWeight:600 }}>
+                    {postUploading ? 'Uploading...' : 'Photo/Video'}
+                    <input type="file" accept="image/*,video/*" onChange={handlePostMedia} style={{ display:'none' }} />
+                  </label>
+                  {postMedia && <button onClick={() => { setPostMedia(''); setPostMediaType('') }} style={{ background:'none', border:'none', color:'#FF4B6E', fontSize:16, cursor:'pointer' }}>x</button>}
+                </div>
+                <button onClick={submitPost} disabled={posting||!postContent.trim()} className="btn btn-blue btn-sm">{posting?'Posting...':'Post'}</button>
+              </div>
+            </div>
+          )}
+          {bizPosts.length === 0 && <div className="empty"><div className="ico">📝</div><h3>No posts yet</h3><p>{isOwn ? 'Share your first update!' : 'Nothing posted yet'}</p></div>}
+          {bizPosts.map((p:any) => (
+            <div key={p.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.07)', marginBottom:10 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  {biz?.logo_url ? <img src={biz.logo_url} alt={biz?.name} style={{ width:32, height:32, borderRadius:9, objectFit:'cover' as const }} /> : <div style={{ width:32, height:32, borderRadius:9, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color:'#fff' }}>{biz?.logo}</div>}
+                  <div><div style={{ fontSize:12, fontWeight:700 }}>{biz?.name}</div><div style={{ fontSize:10, color:'#7A92B0' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}</div></div>
+                </div>
+                {isOwn && <button onClick={() => deletePost(p.id)} style={{ background:'none', border:'none', color:'#FF4B6E', fontSize:13, cursor:'pointer', fontWeight:700 }}>Delete</button>}
+              </div>
+              <p style={{ fontSize:13, color:'#fff', lineHeight:1.6, marginBottom:p.media_url?10:0 }}>{p.content}</p>
+              {p.media_url && (p.media_type === 'video' ? <video src={p.media_url} controls style={{ width:'100%', borderRadius:10, maxHeight:220 }} /> : <img src={p.media_url} alt="post" style={{ width:'100%', borderRadius:10, maxHeight:220, objectFit:'cover' as const }} />)}
+              <div style={{ display:'flex', gap:8, marginTop:10, paddingTop:8, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
+                <button onClick={async () => {
+                  await sb.from('post_likes').insert({ post_id:p.id, business_id:myBiz?.id })
+                  setBizPosts((prev:any[]) => prev.map((pp:any) => pp.id===p.id ? {...pp, likes:(pp.likes||0)+1} : pp))
+                }} style={{ flex:1, padding:'6px 0', background:'#0A1628', border:'1px solid rgba(255,255,255,0.07)', borderRadius:9, color:'#7A92B0', fontSize:12, fontWeight:600, cursor:'pointer' }}>Like {p.likes||0}</button>
+                <button onClick={async () => {
+                  if (!myBiz || !biz) return
+                  const { data:chat } = await sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:biz.id })
+                  await sb.from('messages').insert({ chat_id:chat, sender_id:myBiz.id, text:'RFQ: I am interested in your products/services. Can we connect?' })
+                  toast('RFQ sent!')
+                }} style={{ flex:1, padding:'6px 0', background:'rgba(30,126,247,0.15)', border:'1px solid rgba(30,126,247,0.3)', borderRadius:9, color:'#1E7EF7', fontSize:12, fontWeight:600, cursor:'pointer' }}>RFQ</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 {tab === 'about' && (
 <div style={{ padding:'0 16px' }}>
 <div style={{ background:'#152236', borderRadius:13, padding:13, border:'1px solid rgba(255,255,255,0.07)' }}>
