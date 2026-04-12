@@ -24,6 +24,11 @@ const [posting, setPosting] = useState(false)
 const [postUploading, setPostUploading] = useState(false)
 
 useEffect(() => {
+  if (!biz?.id || tab !== 'posts') return
+  sb.from('posts').select('*').eq('business_id', biz.id).order('created_at', { ascending:false }).then(({ data }) => setBizPosts(data||[]))
+}, [biz?.id, tab])
+
+useEffect(() => {
 if (isOwn) { setBiz(myBiz); setLoading(false); return }
 sb.from('businesses').select('*,products(*)').eq('id', viewId!).single().then(({ data }) => { setBiz(data); setLoading(false) })
 if (myBiz && viewId) sb.from('connections').select('id').eq('from_biz_id', myBiz.id).eq('to_biz_id', viewId).single().then(({ data }) => setIsConn(!!data))
