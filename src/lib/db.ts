@@ -6,6 +6,15 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY)
 
+export async function uploadImage(file: File, folder: string): Promise<string | null> {
+  const ext = file.name.split('.').pop()
+  const filename = folder + '/' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.' + ext
+  const { error } = await sb.storage.from('bizzkit-images').upload(filename, file, { cacheControl: '3600', upsert: true })
+  if (error) { console.error('Upload error:', error); return null }
+  const { data } = sb.storage.from('bizzkit-images').getPublicUrl(filename)
+  return data.publicUrl
+}
+
 export type Business = {
   id: string; owner_id: string; name: string; tagline: string
   description: string; industry: string; type: string
