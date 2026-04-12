@@ -9,7 +9,13 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
 const { user, myBiz, refreshBiz, toast } = useApp()
 const isOwn = !viewId || viewId === myBiz?.id
 const [biz, setBiz] = useState<Business|null>(null)
-const [tab, setTab] = useState<'products'|'about'>('products')
+const [tab, setTab] = useState<'products'|'posts'|'about'>('products')
+  const [bizPosts, setBizPosts] = useState<any[]>([])
+  const [postContent, setPostContent] = useState('')
+  const [postMedia, setPostMedia] = useState('')
+  const [postMediaType, setPostMediaType] = useState('')
+  const [posting, setPosting] = useState(false)
+  const [postUploading, setPostUploading] = useState(false)
 const [editing, setEditing] = useState(false)
 const [isConn, setIsConn] = useState(false)
 const [loading, setLoading] = useState(true)
@@ -36,21 +42,14 @@ if (!biz) return <div style={{ padding:'80px 20px', textAlign:'center', color:'#
 
 return (
 <div style={{ paddingBottom:16 }}>
-<div style={{ height:130, background:'linear-gradient(135deg,#0C2340,#1A3D6E)', position:'relative', flexShrink:0 }}>
-{onBack && (
-<button onClick={onBack} style={{ position:'absolute', top:12, left:14, width:32, height:32, borderRadius:10, background:'rgba(0,0,0,0.35)', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>
-)}
-{isOwn && (
-<button onClick={() => setEditing(true)} style={{ position:'absolute', top:12, right:14, padding:'8px 16px', borderRadius:10, background:'rgba(30,126,247,0.4)', border:'1px solid rgba(30,126,247,0.5)', color:'#fff', fontSize:12, fontWeight:700, cursor:'pointer', zIndex:10 }}>✏️ Edit</button>
-)}
-{biz.logo_url && (
-<div style={{ position:'absolute', inset:0, overflow:'hidden' }}>
-<img src={biz.logo_url} alt={biz.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const, opacity:0.3 }} />
-</div>
+<div style={{ padding:'16px 16px 0', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+        {onBack && <button onClick={onBack} style={{ width:32, height:32, borderRadius:10, background:'#152236', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>}
+        {isOwn && <button onClick={() => setEditing(true)} style={{ marginLeft:'auto', padding:'8px 16px', borderRadius:10, background:'#152236', border:'1px solid rgba(255,255,255,0.1)', color:'#fff', fontSize:12, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>}
+      </div>
 )}
 </div>
 <div style={{ padding:'0 16px' }}>
-<div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:-34 }}>
+<div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:12 }}>
 {biz.logo_url ? (
 <img src={biz.logo_url} alt={biz.name} style={{ width:68, height:68, borderRadius:17, objectFit:'cover' as const, border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }} />
 ) : (
