@@ -1,0 +1,26 @@
+{
+  "name": "Bizzkit",
+  "short_name": "Bizzkit",
+  "description": "The Business Showcase & Networking Platform",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#060E1C",
+  "theme_color": "#0A1628",
+  "orientation": "portrait-primary",
+  "categories": ["business", "networking"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
