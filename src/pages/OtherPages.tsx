@@ -98,7 +98,7 @@ return (
 </div>
 )}
 {(biz.products||[]).map(p => (
-<div key={p.id} style={{ background:'#152236', borderRadius:13, overflow:'hidden', border:'1px solid rgba(255,255,255,0.07)', cursor:'pointer' }} onClick={() => toast(p.name+' — '+p.price, 'info')}>
+<div key={p.id} style={{ background:'#152236', borderRadius:13, overflow:'hidden', border:'1px solid rgba(255,255,255,0.07)', cursor:'pointer' }} onClick={() => toast(p.name+' - '+p.price, 'info')}>
 <div style={{ height:82, display:'flex', alignItems:'center', justifyContent:'center', fontSize:30, background:'#1A2D47', overflow:'hidden' }}>
 {p.image_url ? <img src={p.image_url} alt={p.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} /> : p.emoji}
 </div>
@@ -115,7 +115,7 @@ return (
 <div style={{ background:'#152236', borderRadius:13, padding:13, border:'1px solid rgba(255,255,255,0.07)' }}>
 <p style={{ fontSize:12.5, color:'#7A92B0', lineHeight:1.7 }}>{biz.description||'No description yet.'}</p>
 <div style={{ marginTop:12 }}>
-{[['Industry',biz.industry],['Type',biz.type],['City',biz.city],['Country',biz.country],…(biz.founded?[['Founded',biz.founded]]:[]),…(biz.website?[['Website',biz.website]]:[])].map(([l,v]) => (
+{[['Industry',biz.industry],['Type',biz.type],['City',biz.city],['Country',biz.country],...(biz.founded?[['Founded',biz.founded]]:[]),...(biz.website?[['Website',biz.website]]:[])].map(([l,v]) => (
 <div key={l} style={{ display:'flex', justifyContent:'space-between', padding:'6px 0', borderBottom:'1px solid rgba(255,255,255,0.07)', fontSize:12 }}>
 <span style={{ color:'#7A92B0' }}>{l}</span>
 <span style={{ fontWeight:600 }}>{v}</span>
@@ -161,7 +161,7 @@ if (file.size > 10 * 1024 * 1024) { setErr('File must be under 10MB'); return }
 setUploading(true)
 const url = await uploadImage(file, 'logos')
 if (url) { setLogoUrl(url); toast('Logo uploaded!') }
-else setErr('Upload failed — please try again')
+else setErr('Upload failed - please try again')
 setUploading(false)
 }
 
@@ -193,7 +193,7 @@ if (existing) {
 await sb.from('businesses').update(data).eq('id', existing.id)
 } else {
 const { data:biz } = await sb.from('businesses').insert(data).select().single()
-if (biz && products.length) await sb.from('products').insert(products.map(p => ({ …p, business_id:biz.id })))
+if (biz && products.length) await sb.from('products').insert(products.map(p => ({ ...p, business_id:biz.id })))
 }
 setSaving(false); onSaved()
 }
@@ -201,7 +201,7 @@ setSaving(false); onSaved()
 const addProd = () => {
 if (!pName.trim()) return
 if (existing) sb.from('products').insert({ business_id:existing.id, name:pName, price:pPrice, emoji:pEmoji, image_url:pImageUrl||null }).then(() => {})
-setProducts(p => […p, { name:pName, price:pPrice, emoji:pEmoji, image_url:pImageUrl }])
+setProducts(p => [...p, { name:pName, price:pPrice, emoji:pEmoji, image_url:pImageUrl }])
 setPName(''); setPPrice(''); setPImageUrl('')
 }
 
@@ -240,14 +240,14 @@ return (
 </div>
 <div className="field"><label>Business Name *</label><input placeholder="e.g. NexaTech Solutions" value={name} onChange={e => setName(e.target.value)} /></div>
 <div className="field"><label>Tagline</label><input placeholder="Short tagline" value={tagline} onChange={e => setTagline(e.target.value)} /></div>
-<div className="field"><label>Description *</label><textarea placeholder="Tell businesses who you are…" value={desc} onChange={e => setDesc(e.target.value)} /></div>
+<div className="field"><label>Description *</label><textarea placeholder="Tell businesses who you are..." value={desc} onChange={e => setDesc(e.target.value)} /></div>
 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:11 }}>
-<div className="field"><label>Industry *</label><select value={ind} onChange={e => setInd(e.target.value)}><option value="">Select…</option>{INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}</select></div>
+<div className="field"><label>Industry *</label><select value={ind} onChange={e => setInd(e.target.value)}><option value="">Select...</option>{INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}</select></div>
 <div className="field"><label>Type</label><select value={type} onChange={e => setType(e.target.value)}><option value="B2B">B2B</option><option value="D2C">D2C</option><option value="B2B + D2C">B2B + D2C</option></select></div>
 </div>
 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:11 }}>
 <div className="field"><label>City *</label><input placeholder="Dubai" value={city} onChange={e => setCity(e.target.value)} /></div>
-<div className="field"><label>Country *</label><select value={country} onChange={e => setCountry(e.target.value)}><option value="">Select…</option>{COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+<div className="field"><label>Country *</label><select value={country} onChange={e => setCountry(e.target.value)}><option value="">Select...</option>{COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
 </div>
 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:11 }}>
 <div className="field"><label>Website</label><input placeholder="yoursite.com" value={website} onChange={e => setWebsite(e.target.value)} /></div>
@@ -255,7 +255,7 @@ return (
 </div>
 {err && <div className="form-err">{err}</div>}
 <button className="btn btn-blue btn-full" onClick={() => validate() && setStep(1)}>Next: Add Products →</button>
-<button className="btn btn-ghost btn-full" style={{ marginTop:8 }} onClick={save} disabled={saving}>{saving?'Saving…':'Save & Skip Products'}</button>
+<button className="btn btn-ghost btn-full" style={{ marginTop:8 }} onClick={save} disabled={saving}>{saving?'Saving...':'Save & Skip Products'}</button>
 </div>
 )}
 {step === 1 && (
@@ -286,7 +286,7 @@ pImageUrl.includes('/videos/') ?
 <img src={pImageUrl} alt="preview" style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} />
 )}
 <label style={{ padding:'8px 14px', borderRadius:9, background:'#152236', border:'1px solid rgba(255,255,255,0.07)', fontSize:11.5, color:'#7A92B0', cursor:'pointer', fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
-{uploading ? '⏳ Uploading…' : '📷 Upload Photo / Video'}
+{uploading ? '⏳ Uploading...' : '📷 Upload Photo / Video'}
 <input type="file" accept="image/*,video/*" onChange={handleProductMediaUpload} style={{ display:'none' }} />
 </label>
 {pImageUrl && <button onClick={() => setPImageUrl('')} style={{ background:'none', border:'none', color:'#FF4B6E', fontSize:18, cursor:'pointer' }}>×</button>}
@@ -296,7 +296,7 @@ pImageUrl.includes('/videos/') ?
 </div>
 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:9 }}>
 <button className="btn btn-ghost" onClick={() => setStep(0)}>← Back</button>
-<button className="btn btn-blue" onClick={save} disabled={saving}>{saving?'Saving…':existing?'Save Changes':'Create Profile'}</button>
+<button className="btn btn-blue" onClick={save} disabled={saving}>{saving?'Saving...':existing?'Save Changes':'Create Profile'}</button>
 </div>
 </div>
 )}
@@ -403,7 +403,7 @@ return (
 </div>
 </div>
 <div style={{ padding:'0 13px 12px', display:'flex', gap:7 }}>
-{!joined && !isMine && <button className="btn btn-blue btn-full btn-sm" onClick={onJoin}>Join — {spots} spots left</button>}
+{!joined && !isMine && <button className="btn btn-blue btn-full btn-sm" onClick={onJoin}>Join - {spots} spots left</button>}
 {joined && !isMine && <><button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onLeave}>Leave</button><button className="btn btn-blue btn-sm" style={{ flex:2 }}>View Details</button></>}
 {isMine && <button className="btn btn-ghost btn-full btn-sm" onClick={() => alert('Conference management coming in next update!')}>Manage Conference</button>}
 </div>
@@ -424,7 +424,7 @@ const book = async () => {
 if (!myBiz) { toast('Create a business profile first', 'info'); return }
 setSaving(true)
 const location = loc || myBiz.city+', '+myBiz.country
-const { data:conf } = await sb.from('conferences').insert({ organizer_id:myBiz.id, title:(ind||'Business')+' Networking — '+myBiz.city, date:'2026-06-'+String(day).padStart(2,'0'), time, industry:ind||'General', location, max_attendees:8 }).select().single()
+const { data:conf } = await sb.from('conferences').insert({ organizer_id:myBiz.id, title:(ind||'Business')+' Networking - '+myBiz.city, date:'2026-06-'+String(day).padStart(2,'0'), time, industry:ind||'General', location, max_attendees:8 }).select().single()
 if (conf) await sb.from('conference_attendees').insert({ conference_id:conf.id, business_id:myBiz.id })
 setSaving(false); onDone()
 }
@@ -450,7 +450,7 @@ return <div key={i} onClick={() => setDay(d)} style={{ textAlign:'center', paddi
 <div style={{ display:'flex', gap:7, flexWrap:'wrap', marginBottom:16 }}>
 {TIMES.map(t => <div key={t} onClick={() => setTime(t)} style={{ padding:'7px 13px', borderRadius:9, border:`1.5px solid ${time===t?'#1E7EF7':'rgba(255,255,255,0.07)'}`, fontSize:11.5, fontWeight:600, color:time===t?'#fff':'#7A92B0', background:time===t?'#1E7EF7':'#152236', cursor:'pointer' }}>{t}</div>)}
 </div>
-<button className="btn btn-blue btn-full" onClick={book} disabled={saving}>{saving?'Booking…':'Book Conference Session'}</button>
+<button className="btn btn-blue btn-full" onClick={book} disabled={saving}>{saving?'Booking...':'Book Conference Session'}</button>
 </div>
 </div>
 )
@@ -484,7 +484,7 @@ return (
 <div style={{ display:'flex', gap:7, flexWrap:'wrap', marginBottom:16 }}>
 {TIMES.map(t => <div key={t} onClick={() => setTime(t)} style={{ padding:'7px 13px', borderRadius:9, border:`1.5px solid ${time===t?'#1E7EF7':'rgba(255,255,255,0.07)'}`, fontSize:11.5, fontWeight:600, color:time===t?'#fff':'#7A92B0', background:time===t?'#1E7EF7':'#152236', cursor:'pointer' }}>{t}</div>)}
 </div>
-<button className="btn btn-blue btn-full" onClick={create} disabled={saving||!title||!date}>{saving?'Creating…':'Create Conference'}</button>
+<button className="btn btn-blue btn-full" onClick={create} disabled={saving||!title||!date}>{saving?'Creating...':'Create Conference'}</button>
 </div>
 </div>
 )
@@ -512,7 +512,7 @@ const next = () => { setFading(true); setTimeout(() => { setIdx(i => i+1); setSe
 const connect = () => {
 if (!myBiz) { toast('Create a profile first', 'info'); return }
 if (connected.has(match.id)) { toast('Already connected!', 'info'); return }
-setConnected(s => new Set([…s, match.id]))
+setConnected(s => new Set([...s, match.id]))
 toast('Connected with ' + match.name + '!')
 }
 return (
@@ -602,10 +602,10 @@ const breakdown = [
 ]
 
 const tiers = [
-{ name:'Bronze', range:'0–49', icon:'🥉' },
-{ name:'Silver', range:'50–74', icon:'🥈' },
-{ name:'Gold', range:'75–89', icon:'🥇' },
-{ name:'Platinum', range:'90–100', icon:'💎' },
+{ name:'Bronze', range:'0-49', icon:'🥉' },
+{ name:'Silver', range:'50-74', icon:'🥈' },
+{ name:'Gold', range:'75-89', icon:'🥇' },
+{ name:'Platinum', range:'90-100', icon:'💎' },
 ]
 
 const boosts = [
