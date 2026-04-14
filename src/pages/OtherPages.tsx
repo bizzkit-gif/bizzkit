@@ -1057,12 +1057,15 @@ return (
 // ── GO RANDOM ─────────────────────────────────────────────────────
 export function GoRandomPage() {
 const { myBiz, toast } = useApp()
+const RANDOM_CALL_MARKER = '[RANDOM_CALL_INVITE]'
 const [pool, setPool] = useState<Business[]>([])
 const [idx, setIdx] = useState(0)
 const [sessions, setSessions] = useState(0)
 const [connected, setConnected] = useState<Set<string>>(new Set())
 const [fading, setFading] = useState(false)
 const [activeCallWith, setActiveCallWith] = useState<Business|null>(null)
+const [incomingCallFrom, setIncomingCallFrom] = useState<Business|null>(null)
+const callAlertTimerRef = useRef<number | null>(null)
 
 useEffect(() => {
   if (!myBiz) return
@@ -1083,6 +1086,60 @@ useEffect(() => {
       setConnected(ids)
     })
 }, [myBiz?.id])
+
+useEffect(() => {
+  if (!myBiz) return
+  const sinceIso = new Date(Date.now() - (10 * 60 * 1000)).toISOString()
+  const loadRecentInvite = async () => {
+    const { data: chats } = await sb.from('chats').select('id').or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
+    const chatIds = (chats || []).map((c: { id: string }) => c.id)
+    if (!chatIds.length) return
+    const { data: recent } = await sb
+      .from('messages')
+      .select('sender_id,text,created_at')
+      .in('chat_id', chatIds)
+      .neq('sender_id', myBiz.id)
+      .gte('created_at', sinceIso)
+      .ilike('text', `%${RANDOM_CALL_MARKER}%`)
+      .order('created_at', { ascending:false })
+      .limit(1)
+    const latest = recent?.[0]
+    if (!latest?.sender_id) return
+    const known = pool.find((b) => b.id === latest.sender_id) || null
+    if (known) setIncomingCallFrom(known)
+    else {
+      const { data } = await sb.from('businesses').select('*').eq('id', latest.sender_id).single()
+      if (data) setIncomingCallFrom(data as Business)
+    }
+  }
+  loadRecentInvite()
+
+  const ch = sb.channel('random-call-msg-' + myBiz.id)
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, async (payload) => {
+      const row = payload.new as { sender_id?: string; text?: string }
+      if (!row?.sender_id || row.sender_id === myBiz.id || !row.text?.includes(RANDOM_CALL_MARKER)) return
+      const known = pool.find((b) => b.id === row.sender_id) || null
+      if (known) setIncomingCallFrom(known)
+      else {
+        const { data } = await sb.from('businesses').select('*').eq('id', row.sender_id).single()
+        if (data) setIncomingCallFrom(data as Business)
+      }
+      toast('Incoming random call 📞', 'info')
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200])
+      if (callAlertTimerRef.current) window.clearInterval(callAlertTimerRef.current)
+      callAlertTimerRef.current = window.setInterval(() => {
+        if (navigator.vibrate) navigator.vibrate(120)
+      }, 1800)
+    })
+    .subscribe()
+  return () => {
+    sb.removeChannel(ch)
+    if (callAlertTimerRef.current) {
+      window.clearInterval(callAlertTimerRef.current)
+      callAlertTimerRef.current = null
+    }
+  }
+}, [myBiz?.id, pool, toast])
 
 const match = pool.length ? pool[idx % pool.length] : null
 const next = () => {
@@ -1110,8 +1167,16 @@ sb.from('connections').insert({ from_biz_id:myBiz.id, to_biz_id:match.id }).then
 })
 }
 
-const startRandomCall = () => {
+const startRandomCall = async () => {
   if (!myBiz || !match) { toast('No match found yet', 'info'); return }
+  const { data: chatId } = await sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:match.id })
+  if (!chatId) { toast('Could not start call invite', 'error'); return }
+  await sb.from('messages').insert({
+    chat_id: chatId,
+    sender_id: myBiz.id,
+    text: `${RANDOM_CALL_MARKER} ${myBiz.name} is calling you in Random.`
+  })
+  toast(`Calling ${match.name}...`, 'info')
   setActiveCallWith(match)
 }
 
@@ -1121,6 +1186,29 @@ if (activeCallWith) return <RandomCallRoom myBiz={myBiz} other={activeCallWith} 
 
 return (
 <div style={{ paddingBottom:16 }}>
+{incomingCallFrom && (
+  <div style={{ margin:'0 16px 12px', background:'rgba(30,126,247,0.15)', border:'1px solid rgba(30,126,247,0.45)', borderRadius:13, padding:'12px 13px' }}>
+    <div style={{ fontFamily:'Syne, sans-serif', fontSize:13, fontWeight:700, marginBottom:4 }}>📞 Incoming Call</div>
+    <div style={{ fontSize:11.5, color:'#7A92B0', marginBottom:9 }}>{incomingCallFrom.name} is calling you in Random.</div>
+    <div style={{ display:'flex', gap:8 }}>
+      <button className="btn btn-green btn-sm" style={{ flex:1 }} onClick={() => {
+        setActiveCallWith(incomingCallFrom)
+        setIncomingCallFrom(null)
+        if (callAlertTimerRef.current) {
+          window.clearInterval(callAlertTimerRef.current)
+          callAlertTimerRef.current = null
+        }
+      }}>Accept</button>
+      <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={() => {
+        setIncomingCallFrom(null)
+        if (callAlertTimerRef.current) {
+          window.clearInterval(callAlertTimerRef.current)
+          callAlertTimerRef.current = null
+        }
+      }}>Decline</button>
+    </div>
+  </div>
+)}
 <div className="topbar"><div className="page-title">🎲 Go Random</div><div style={{ fontSize:11, color:'#7A92B0' }}>Speed networking</div></div>
 <div style={{ textAlign:'center', padding:'0 20px 14px', fontSize:12, color:'#7A92B0', lineHeight:1.5 }}>Get randomly matched with real businesses and start an in-app video call.</div>
 <div style={{ margin:'0 16px 14px', background:'#1A2D47', borderRadius:20, padding:'18px 15px', border:'1px solid rgba(255,255,255,0.07)', transition:'opacity .2s', opacity:fading?0:1 }}>
@@ -1300,16 +1388,16 @@ function RandomCallRoom({ myBiz, other, onBack }: { myBiz: Business; other: Busi
       </div>
       <div style={{ flex:1, overflowY:'auto', padding:12 }}>
         {starting && <div style={{ fontSize:12, color:'#7A92B0', marginBottom:8 }}>Starting random call… waiting for the other business to join this room.</div>}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, minmax(0,1fr))', gap:9 }}>
+        <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:9 }}>
           <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, overflow:'hidden' }}>
-            <video ref={localVideoRef} autoPlay muted playsInline style={{ width:'100%', height:150, objectFit:'cover' }} />
+            <video ref={localVideoRef} autoPlay muted playsInline style={{ width:'100%', height:'40vh', minHeight:180, objectFit:'cover' }} />
             <div style={{ padding:'6px 8px', fontSize:11, fontWeight:700 }}>You ({myBiz.name})</div>
           </div>
           <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, overflow:'hidden' }}>
             {remoteStream ? (
-              <video autoPlay playsInline style={{ width:'100%', height:150, objectFit:'cover' }} ref={el => { if (el && el.srcObject !== remoteStream) el.srcObject = remoteStream }} />
+              <video autoPlay playsInline style={{ width:'100%', height:'40vh', minHeight:180, objectFit:'cover' }} ref={el => { if (el && el.srcObject !== remoteStream) el.srcObject = remoteStream }} />
             ) : (
-              <div style={{ width:'100%', height:150, display:'flex', alignItems:'center', justifyContent:'center', color:'#7A92B0', fontSize:12 }}>Waiting for {other.name}...</div>
+              <div style={{ width:'100%', height:'40vh', minHeight:180, display:'flex', alignItems:'center', justifyContent:'center', color:'#7A92B0', fontSize:12 }}>Waiting for {other.name}...</div>
             )}
             <div style={{ padding:'6px 8px', fontSize:11, fontWeight:700 }}>{other.name}</div>
           </div>

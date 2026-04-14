@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import { sb, Business } from '../lib/db'
 
 type ToastType = 'success' | 'error' | 'info'
@@ -39,6 +39,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [toastMsg, setToastMsg] = useState('')
   const [toastType, setToastType] = useState('success')
   const [toastVisible, setToastVisible] = useState(false)
+  const unreadRef = useRef(0)
 
   const toast = useCallback((msg: string, type: ToastType = 'success') => {
     setToastMsg(msg)
@@ -92,12 +93,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const chatIds = (chats || []).map((c: { id: string }) => c.id)
       if (!chatIds.length) { if (active) setUnread(0); return }
       const { count } = await sb.from('messages').select('id', { count:'exact', head:true }).in('chat_id', chatIds).neq('sender_id', myBiz.id).eq('read', false)
-      if (active) setUnread(count || 0)
+      if (active) {
+        const next = count || 0
+        unreadRef.current = next
+        setUnread(next)
+      }
     }
 
     refreshUnread()
     const ch = sb.channel('global-unread-' + myBiz.id)
-      .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, refreshUnread)
+      .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, async (payload) => {
+        const row = payload.new as { chat_id?: string; sender_id?: string }
+        if (!row?.chat_id || !row?.sender_id || row.sender_id === myBiz.id) return
+        const { data: chat } = await sb.from('chats').select('participant_a,participant_b').eq('id', row.chat_id).single()
+        if (!chat) return
+        const isMine = chat.participant_a === myBiz.id || chat.participant_b === myBiz.id
+        if (!isMine) return
+        const prevUnread = unreadRef.current
+        await refreshUnread()
+        if (unreadRef.current > prevUnread) {
+          if (navigator.vibrate) navigator.vibrate([120, 60, 120])
+          if (tab !== 'messages') toast('New message received 💬', 'info')
+        }
+      })
       .on('postgres_changes', { event:'UPDATE', schema:'public', table:'messages' }, refreshUnread)
       .subscribe()
 
@@ -105,7 +123,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       active = false
       sb.removeChannel(ch)
     }
-  }, [myBiz?.id])
+  }, [myBiz?.id, tab, toast])
 
   return (
     <AppCtx.Provider value={{
