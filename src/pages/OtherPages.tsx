@@ -22,7 +22,7 @@ export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:strin
 const { user, myBiz, refreshBiz, toast } = useApp()
 const isOwn = !viewId || viewId === myBiz?.id
 const [biz, setBiz] = useState<Business|null>(null)
-const [tab, setTab] = useState<'products'|'wall'|'about'>('products')
+const [tab, setTab] = useState<'posts'|'about'>('posts')
 type BizPost = {
   id: string
   business_id: string
@@ -44,12 +44,24 @@ const [postMedia, setPostMedia] = useState('')
 const [postMediaType, setPostMediaType] = useState<'image'|'video'|''>('')
 const [posting, setPosting] = useState(false)
 const [postUploading, setPostUploading] = useState(false)
+const [connections, setConnections] = useState<Business[]>([])
 const [postErr, setPostErr] = useState('')
+const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set())
+const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set())
 
 useEffect(() => {
-  if (!biz?.id || tab !== 'wall') return
-  sb.from('posts').select('*').eq('business_id', biz.id).order('created_at', { ascending:false }).then(({ data }) => setBizPosts(data||[]))
-}, [biz?.id, tab])
+  if (!biz?.id || tab !== 'posts') return
+  const loadPostsAndLikes = async () => {
+    const { data: posts } = await sb.from('posts').select('*').eq('business_id', biz.id).order('created_at', { ascending:false })
+    const nextPosts = (posts || []) as BizPost[]
+    setBizPosts(nextPosts)
+    if (!myBiz || !nextPosts.length) { setLikedPostIds(new Set()); return }
+    const postIds = nextPosts.map((p) => p.id)
+    const { data: likedRows } = await sb.from('post_likes').select('post_id').eq('business_id', myBiz.id).in('post_id', postIds)
+    setLikedPostIds(new Set((likedRows || []).map((row: { post_id: string }) => row.post_id)))
+  }
+  loadPostsAndLikes()
+}, [biz?.id, tab, myBiz?.id])
 
 useEffect(() => {
 if (isOwn) { setBiz(myBiz); setLoading(false); return }
@@ -57,12 +69,33 @@ sb.from('businesses').select('*,products(*)').eq('id', viewId!).single().then(({
 if (myBiz && viewId) sb.from('connections').select('id').eq('from_biz_id', myBiz.id).eq('to_biz_id', viewId).single().then(({ data }) => setIsConn(!!data))
 }, [isOwn, viewId, myBiz])
 
+useEffect(() => {
+  if (!biz?.id) { setConnections([]); return }
+  const loadConnections = async () => {
+    const { data: connRows, error } = await sb
+      .from('connections')
+      .select('from_biz_id,to_biz_id')
+      .or(`from_biz_id.eq.${biz.id},to_biz_id.eq.${biz.id}`)
+    if (error || !connRows?.length) { setConnections([]); return }
+    const ids = Array.from(new Set(connRows.map(c => (c.from_biz_id === biz.id ? c.to_biz_id : c.from_biz_id)).filter((id: string) => id && id !== biz.id)))
+    if (!ids.length) { setConnections([]); return }
+    const { data: connBiz } = await sb.from('businesses').select('*').in('id', ids)
+    setConnections(connBiz || [])
+  }
+  loadConnections()
+}, [biz?.id])
+
 const doConnect = async () => {
 if (!myBiz || !biz) { toast('Create a profile first', 'info'); return }
 if (isConn) { toast('Already connected!', 'info'); return }
-await sb.from('connections').insert([{ from_biz_id:myBiz.id, to_biz_id:biz.id },{ from_biz_id:biz.id, to_biz_id:myBiz.id }])
+const { error: connErr } = await sb.from('connections').insert({ from_biz_id:myBiz.id, to_biz_id:biz.id })
+if (connErr) { toast('Failed to connect: ' + connErr.message, 'error'); return }
 await sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:biz.id })
 setIsConn(true)
+if (isOwn) {
+  const { data: connBiz } = await sb.from('businesses').select('*').eq('id', biz.id).single()
+  if (connBiz) setConnections(prev => prev.some(c => c.id === connBiz.id) ? prev : [...prev, connBiz])
+}
 toast('Connected with ' + biz.name + '!')
 }
 
@@ -151,14 +184,27 @@ return (
 {biz.certified && <span className="badge badge-cert">🏅 Certified</span>}
 <span className="badge badge-type">{biz.type}</span>
 </div>
-<div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:7, margin:'12px 0' }}>
-{[{v:biz.followers,l:'Followers'},{v:0,l:'Connections'},{v:biz.products?.length||0,l:'Products'}].map(s => (
+<div style={{ display:'grid', gridTemplateColumns:'1fr', gap:7, margin:'12px 0' }}>
+{[{v:0,l:'Connections'}].map(s => (
 <div key={s.l} style={{ background:'#152236', borderRadius:11, padding:'9px 7px', textAlign:'center', border:'1px solid rgba(255,255,255,0.07)' }}>
-<div style={{ fontFamily:'Syne, sans-serif', fontSize:17, fontWeight:800, color:'#1E7EF7' }}>{s.v}</div>
+<div style={{ fontFamily:'Syne, sans-serif', fontSize:17, fontWeight:800, color:'#1E7EF7' }}>{connections.length}</div>
 <div style={{ fontSize:9.5, color:'#7A92B0', marginTop:1 }}>{s.l}</div>
 </div>
 ))}
 </div>
+{connections.length > 0 && (
+<div style={{ margin:'0 0 12px' }}>
+<div style={{ fontSize:11.5, color:'#7A92B0', marginBottom:7, fontWeight:700 }}>Connected Businesses</div>
+<div style={{ display:'flex', gap:7, overflowX:'auto' }}>
+{connections.map(c => (
+<div key={c.id} style={{ background:'#152236', borderRadius:11, border:'1px solid rgba(255,255,255,0.07)', padding:'7px 9px', minWidth:132 }}>
+<div style={{ fontSize:12, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.name}</div>
+<div style={{ fontSize:10, color:'#7A92B0', marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{c.industry}</div>
+</div>
+))}
+</div>
+</div>
+)}
 {!isOwn && (
 <div style={{ display:'flex', gap:7, marginBottom:15 }}>
 <button onClick={doConnect} className={`btn btn-full ${isConn?'btn-ghost':'btn-blue'}`} style={{ flex:1 }}>{isConn?'✓ Connected':'🤝 Connect'}</button>
@@ -167,34 +213,13 @@ return (
 )}
 </div>
 <div style={{ display:'flex', borderBottom:'1px solid rgba(255,255,255,0.07)', margin:'0 0 14px' }}>
-{(['products','wall','about'] as const).map(t => (
+{(['posts','about'] as const).map(t => (
 <div key={t} onClick={() => setTab(t)} style={{ flex:1, textAlign:'center', padding:'9px 4px', fontSize:12, fontWeight:600, cursor:'pointer', color:tab===t?'#1E7EF7':'#7A92B0', borderBottom:`2px solid ${tab===t?'#1E7EF7':'transparent'}` }}>
-{t === 'products' ? 'Products & Services' : t === 'wall' ? 'Wall' : 'About'}
+{t === 'posts' ? 'Posts' : 'About'}
 </div>
 ))}
 </div>
-{tab === 'products' && (
-<div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:9, padding:'0 16px' }}>
-{(biz.products||[]).length === 0 && (
-<div style={{ gridColumn:'1/-1', textAlign:'center', padding:'30px 0', color:'#7A92B0', fontSize:13 }}>
-{isOwn ? <button className="btn btn-accent btn-sm" onClick={() => setEditing(true)}>+ Add Products / Services</button> : 'No products listed'}
-</div>
-)}
-{(biz.products||[]).map(p => (
-<div key={p.id} style={{ background:'#152236', borderRadius:13, overflow:'hidden', border:'1px solid rgba(255,255,255,0.07)', cursor:'pointer' }} onClick={() => toast(p.name+' - '+p.price, 'info')}>
-<div style={{ height:82, display:'flex', alignItems:'center', justifyContent:'center', fontSize:30, background:'#1A2D47', overflow:'hidden' }}>
-{p.image_url ? <img src={p.image_url} alt={p.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} /> : p.emoji}
-</div>
-<div style={{ padding:9 }}>
-<div style={{ fontFamily:'Syne, sans-serif', fontSize:11.5, fontWeight:700 }}>{p.name}</div>
-<div style={{ fontSize:10.5, color:'#4D9DFF', fontWeight:700, marginTop:2 }}>{p.price}</div>
-</div>
-</div>
-))}
-</div>
-)}
-
-      {tab === 'wall' && (
+      {tab === 'posts' && (
         <div style={{ padding:'0 16px' }}>
           {isOwn && (
             <div style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.07)', marginBottom:14 }}>
@@ -213,7 +238,7 @@ return (
               {postErr && <div className="form-err" style={{ marginTop:8 }}>{postErr}</div>}
             </div>
           )}
-          {bizPosts.length === 0 && <div className="empty"><div className="ico">📝</div><h3>No wall posts yet</h3><p>{isOwn ? 'Share your first image/video post!' : 'No wall posts yet'}</p></div>}
+          {bizPosts.length === 0 && <div className="empty"><div className="ico">📝</div><h3>No posts yet</h3><p>{isOwn ? 'Share your first image/video post!' : 'No posts yet'}</p></div>}
           {bizPosts.map((p) => (
             <div key={p.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.07)', marginBottom:10 }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
@@ -226,16 +251,44 @@ return (
               <p style={{ fontSize:13, color:'#fff', lineHeight:1.6, marginBottom:p.media_url?10:0 }}>{p.content}</p>
               {p.media_url && (p.media_type === 'video' ? <video src={p.media_url} controls style={{ width:'100%', borderRadius:10, maxHeight:220 }} /> : <img src={p.media_url} alt="post" style={{ width:'100%', borderRadius:10, maxHeight:220, objectFit:'cover' as const }} />)}
               <div style={{ display:'flex', gap:8, marginTop:10, paddingTop:8, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
-                <button onClick={async () => {
-                  await sb.from('post_likes').insert({ post_id:p.id, business_id:myBiz?.id })
-                  setBizPosts((prev) => prev.map((pp) => pp.id===p.id ? { ...pp, likes:(pp.likes||0)+1 } : pp))
-                }} style={{ flex:1, padding:'6px 0', background:'#0A1628', border:'1px solid rgba(255,255,255,0.07)', borderRadius:9, color:'#7A92B0', fontSize:12, fontWeight:600, cursor:'pointer' }}>Like {p.likes||0}</button>
-                <button onClick={async () => {
-                  if (!myBiz || !biz) return
-                  const { data:chat } = await sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:biz.id })
-                  await sb.from('messages').insert({ chat_id:chat, sender_id:myBiz.id, text:'RFQ: I am interested in your products/services. Can we connect?' })
-                  toast('RFQ sent!')
-                }} style={{ flex:1, padding:'6px 0', background:'rgba(30,126,247,0.15)', border:'1px solid rgba(30,126,247,0.3)', borderRadius:9, color:'#1E7EF7', fontSize:12, fontWeight:600, cursor:'pointer' }}>RFQ</button>
+                <button
+                  onClick={async () => {
+                    if (!myBiz) { toast('Create a business profile first', 'info'); return }
+                    if (likedPostIds.has(p.id)) { toast('You already liked this post', 'info'); return }
+                    if (likingPostIds.has(p.id)) return
+                    setLikingPostIds((prev) => new Set([...prev, p.id]))
+                    const { error } = await sb.from('post_likes').insert({ post_id:p.id, business_id:myBiz.id })
+                    setLikingPostIds((prev) => {
+                      const next = new Set(prev)
+                      next.delete(p.id)
+                      return next
+                    })
+                    if (error) {
+                      if (error.message.toLowerCase().includes('duplicate')) {
+                        setLikedPostIds((prev) => new Set([...prev, p.id]))
+                        toast('You already liked this post', 'info')
+                        return
+                      }
+                      toast('Failed to like post: ' + error.message, 'error')
+                      return
+                    }
+                    setLikedPostIds((prev) => new Set([...prev, p.id]))
+                    setBizPosts((prev) => prev.map((pp) => pp.id===p.id ? { ...pp, likes:(pp.likes||0)+1 } : pp))
+                  }}
+                  disabled={likedPostIds.has(p.id) || likingPostIds.has(p.id)}
+                  style={{ flex:1, padding:'6px 0', background:likedPostIds.has(p.id)?'rgba(30,126,247,0.2)':'#0A1628', border:'1px solid rgba(255,255,255,0.07)', borderRadius:9, color:likedPostIds.has(p.id)?'#1E7EF7':'#7A92B0', fontSize:12, fontWeight:600, cursor:likedPostIds.has(p.id)?'default':'pointer' }}
+                >
+                  {likedPostIds.has(p.id) ? 'Liked' : likingPostIds.has(p.id) ? 'Liking...' : 'Like'} {p.likes||0}
+                </button>
+                {!isOwn && (
+                  <button onClick={async () => {
+                    if (!myBiz || !biz) return
+                    if (myBiz.id === biz.id) { toast('You can only send RFQ to other businesses', 'info'); return }
+                    const { data:chat } = await sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:biz.id })
+                    await sb.from('messages').insert({ chat_id:chat, sender_id:myBiz.id, text:'RFQ: I am interested in your products/services. Can we connect?' })
+                    toast('RFQ sent!')
+                  }} style={{ flex:1, padding:'6px 0', background:'rgba(30,126,247,0.15)', border:'1px solid rgba(30,126,247,0.3)', borderRadius:9, color:'#1E7EF7', fontSize:12, fontWeight:600, cursor:'pointer' }}>RFQ</button>
+                )}
               </div>
             </div>
           ))}
@@ -516,11 +569,24 @@ pImageUrl.includes('/videos/') ?
 }
 
 // ── CONFERENCE PAGE ───────────────────────────────────────────────
+function parseConferenceStart(c: Conference) {
+  const [time, mer] = (c.time || '10:00 AM').split(' ')
+  const [hhRaw, mmRaw] = (time || '10:00').split(':')
+  let hh = Number(hhRaw || 10)
+  const mm = Number(mmRaw || 0)
+  if (mer === 'PM' && hh < 12) hh += 12
+  if (mer === 'AM' && hh === 12) hh = 0
+  const dt = new Date(c.date)
+  dt.setHours(hh, mm, 0, 0)
+  return dt
+}
+
 export function ConferencePage() {
 const { myBiz, toast } = useApp()
 const [confs, setConfs] = useState<Conference[]>([])
 const [loading, setLoading] = useState(true)
 const [view, setView] = useState<'list'|'book'|'create'>('list')
+const [liveConf, setLiveConf] = useState<Conference|null>(null)
 
 const load = useCallback(async () => {
 const { data } = await sb.from('conferences').select('*,conference_attendees(business_id)').order('date', { ascending:true })
@@ -535,8 +601,8 @@ const ch = sb.channel('conf-updates').on('postgres_changes', { event:'*', schema
 return () => { sb.removeChannel(ch) }
 }, [load])
 
-const myConfs = confs.filter(c => myBiz && c.conference_attendees?.some((a:any) => a.business_id === myBiz.id))
-const avail = confs.filter(c => !myBiz || !c.conference_attendees?.some((a:any) => a.business_id === myBiz.id))
+const myConfs = confs.filter(c => c.status !== 'closed' && myBiz && c.conference_attendees?.some((a:any) => a.business_id === myBiz.id))
+const avail = confs.filter(c => c.status !== 'closed' && (!myBiz || !c.conference_attendees?.some((a:any) => a.business_id === myBiz.id)))
 
 const join = async (c: Conference) => {
 if (!myBiz) { toast('Create a business profile first', 'info'); return }
@@ -553,8 +619,64 @@ toast('Left conference')
 load()
 }
 
+const openLive = (c: Conference) => {
+  if (c.status === 'closed') { toast('This conference is closed', 'info'); return }
+  setLiveConf(c)
+}
+
+const ensureChat = async (a: string, b: string) => {
+  const { data } = await sb.rpc('get_or_create_chat', { biz_a:a, biz_b:b })
+  return data as string | null
+}
+
+const sendConferenceNotice = async (c: Conference, kind: 'MISSED'|'REMINDER') => {
+  if (!myBiz || c.organizer_id !== myBiz.id) return
+  const marker = `[CONF_${kind}:${c.id}]`
+  const attendees = (c.conference_attendees || []).map((a:any) => a.business_id).filter((id: string) => id && id !== myBiz.id)
+  for (const attendeeId of attendees) {
+    const chatId = await ensureChat(myBiz.id, attendeeId)
+    if (!chatId) continue
+    const { count } = await sb.from('messages').select('id', { count:'exact', head:true }).eq('chat_id', chatId).ilike('text', `%${marker}%`)
+    if ((count || 0) > 0) continue
+    const text = kind === 'MISSED'
+      ? `${marker} You missed the conference "${c.title}" scheduled on ${fmtDate(c.date)} at ${c.time}.`
+      : `${marker} Reminder: "${c.title}" starts soon at ${c.time}. Please join on time.`
+    await sb.from('messages').insert({ chat_id:chatId, sender_id:myBiz.id, text })
+  }
+}
+
+const closeConference = async (c: Conference, automatic = false) => {
+  if (!myBiz || c.organizer_id !== myBiz.id) return
+  if (c.status === 'closed') return
+  const { error } = await sb.from('conferences').update({ status:'closed' }).eq('id', c.id)
+  if (error) { toast('Failed to close conference: ' + error.message, 'error'); return }
+  await sendConferenceNotice(c, 'MISSED')
+  if (!automatic) toast('Conference closed. Missed-call notices sent.')
+  if (liveConf?.id === c.id) setLiveConf(null)
+  load()
+}
+
+useEffect(() => {
+  if (!myBiz || !confs.length) return
+  const run = async () => {
+    const now = new Date()
+    for (const c of confs) {
+      if (c.organizer_id !== myBiz.id || c.status === 'closed') continue
+      const start = parseConferenceStart(c)
+      const end = new Date(start.getTime() + 60 * 60 * 1000)
+      // Auto close one hour after start time if still open.
+      if (now > end) await closeConference(c, true)
+      // Auto reminder in last 30 minutes before start.
+      const minsToStart = (start.getTime() - now.getTime()) / 60000
+      if (minsToStart > 0 && minsToStart <= 30) await sendConferenceNotice(c, 'REMINDER')
+    }
+  }
+  run()
+}, [confs, myBiz?.id])
+
 if (view === 'book') return <BookForm onDone={() => { load(); setView('list'); toast('Conference booked!') }} onBack={() => setView('list')} />
 if (view === 'create') return <CreateConfForm onDone={() => { load(); setView('list'); toast('Conference created!') }} onBack={() => setView('list')} />
+if (liveConf && myBiz) return <ConferenceLiveRoom conference={liveConf} myBiz={myBiz} onBack={() => setLiveConf(null)} />
 
 return (
 <div style={{ paddingBottom:16 }}>
@@ -570,24 +692,25 @@ return (
 {loading && <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>}
 {!loading && myConfs.length > 0 && (
 <><div className="sec-hd"><h3>My Sessions</h3></div>
-{myConfs.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined onLeave={() => leave(c)} />)}
+{myConfs.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined onLeave={() => leave(c)} onGoLive={() => openLive(c)} onClose={() => closeConference(c)} />)}
 <div style={{ height:8 }} /></>
 )}
 <div className="sec-hd"><h3>Available Sessions</h3><span className="see-all">{avail.length} open</span></div>
 {!loading && avail.length === 0 && <div className="empty"><div className="ico">📅</div><h3>No sessions right now</h3>{myBiz && <button className="btn btn-accent btn-sm" style={{ marginTop:14 }} onClick={() => setView('create')}>+ Create one</button>}</div>}
-{avail.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined={false} onJoin={() => join(c)} />)}
+{avail.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined={false} onJoin={() => join(c)} onGoLive={() => openLive(c)} onClose={() => closeConference(c)} />)}
 </div>
 )
 }
 
-function ConfCard({ c, myBizId, joined, onJoin, onLeave }: any) {
+function ConfCard({ c, myBizId, joined, onJoin, onLeave, onGoLive, onClose }: any) {
 const atts = c.conference_attendees||[]
 const spots = c.max_attendees - atts.length
 const pct = (atts.length/c.max_attendees)*100
 const days = Math.max(0, Math.ceil((new Date(c.date).getTime()-Date.now())/86400000))
 const isMine = myBizId && c.organizer_id === myBizId
+const closed = c.status === 'closed'
 return (
-<div style={{ margin:'0 16px 10px', background:'#152236', borderRadius:15, border:`1px solid ${joined?'rgba(30,126,247,0.35)':'rgba(255,255,255,0.07)'}`, overflow:'hidden' }}>
+<div style={{ margin:'0 16px 10px', background:'#152236', borderRadius:15, border:`1px solid ${closed?'rgba(255,75,110,0.35)':joined?'rgba(30,126,247,0.35)':'rgba(255,255,255,0.07)'}`, overflow:'hidden', opacity:closed?0.75:1 }}>
 <div style={{ padding:'13px 13px 10px' }}>
 <div style={{ display:'flex', alignItems:'flex-start', gap:11 }}>
 <div style={{ width:42, height:42, borderRadius:11, background:'rgba(30,126,247,0.15)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:19, flexShrink:0 }}>{indEmoji(c.industry)}</div>
@@ -596,6 +719,7 @@ return (
 <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700 }}>{c.title}</div>
 {joined && <span style={{ fontSize:9, fontWeight:800, background:'#1E7EF7', color:'#fff', padding:'2px 5px', borderRadius:5 }}>JOINED</span>}
 {isMine && <span style={{ fontSize:9, fontWeight:800, background:'#FF6B35', color:'#fff', padding:'2px 5px', borderRadius:5 }}>HOST</span>}
+{closed && <span style={{ fontSize:9, fontWeight:800, background:'#FF4B6E', color:'#fff', padding:'2px 5px', borderRadius:5 }}>CLOSED</span>}
 </div>
 <div style={{ fontSize:10.5, color:'#7A92B0', marginTop:2 }}>{c.industry} · {c.location}</div>
 <div style={{ fontSize:10.5, color:'#7A92B0', marginTop:1 }}>📅 {fmtDate(c.date)} at {c.time}</div>
@@ -614,12 +738,241 @@ return (
 </div>
 </div>
 <div style={{ padding:'0 13px 12px', display:'flex', gap:7 }}>
-{!joined && !isMine && <button className="btn btn-blue btn-full btn-sm" onClick={onJoin}>Join - {spots} spots left</button>}
-{joined && !isMine && <><button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onLeave}>Leave</button><button className="btn btn-blue btn-sm" style={{ flex:2 }}>View Details</button></>}
-{isMine && <button className="btn btn-ghost btn-full btn-sm" onClick={() => alert('Conference management coming in next update!')}>Manage Conference</button>}
+{!closed && !joined && !isMine && <button className="btn btn-blue btn-full btn-sm" onClick={onJoin}>Join - {spots} spots left</button>}
+{!closed && joined && !isMine && <><button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onLeave}>Leave</button><button className="btn btn-blue btn-sm" style={{ flex:2 }} onClick={onGoLive}>Go Live</button></>}
+{!closed && isMine && <><button className="btn btn-blue btn-sm" style={{ flex:2 }} onClick={onGoLive}>Start Live Session</button><button className="btn btn-red btn-sm" style={{ flex:1 }} onClick={onClose}>Close</button></>}
+{closed && <button className="btn btn-ghost btn-full btn-sm" disabled>Conference Closed</button>}
 </div>
 </div>
 )
+}
+
+type LiveSignal = {
+  type: 'join'|'offer'|'answer'|'ice'|'leave'
+  from: string
+  to?: string
+  bizName?: string
+  bizId?: string
+  payload?: any
+}
+
+function ConferenceLiveRoom({ conference, myBiz, onBack }: { conference: Conference; myBiz: Business; onBack: () => void }) {
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({})
+  const [remoteNames, setRemoteNames] = useState<Record<string, string>>({})
+  const [remoteBizIds, setRemoteBizIds] = useState<Record<string, string>>({})
+  const [micOn, setMicOn] = useState(true)
+  const [camOn, setCamOn] = useState(true)
+  const [starting, setStarting] = useState(true)
+  const [ending, setEnding] = useState(false)
+  const localVideoRef = useRef<HTMLVideoElement|null>(null)
+  const localStreamRef = useRef<MediaStream|null>(null)
+  const channelRef = useRef<any>(null)
+  const peersRef = useRef<Record<string, RTCPeerConnection>>({})
+  const peerIdRef = useRef<string>(`peer-${Date.now()}-${Math.random().toString(36).slice(2,8)}`)
+
+  const cleanupPeer = useCallback((pid: string) => {
+    const pc = peersRef.current[pid]
+    if (pc) {
+      pc.onicecandidate = null
+      pc.ontrack = null
+      pc.close()
+      delete peersRef.current[pid]
+    }
+    setRemoteStreams(prev => {
+      const next = { ...prev }
+      delete next[pid]
+      return next
+    })
+    setRemoteNames(prev => {
+      const next = { ...prev }
+      delete next[pid]
+      return next
+    })
+    setRemoteBizIds(prev => {
+      const next = { ...prev }
+      delete next[pid]
+      return next
+    })
+  }, [])
+
+  const sendSignal = useCallback((sig: LiveSignal) => {
+    const ch = channelRef.current
+    if (!ch) return
+    ch.send({ type:'broadcast', event:'signal', payload:sig })
+  }, [])
+
+  const createPeer = useCallback((targetPeerId: string) => {
+    if (peersRef.current[targetPeerId]) return peersRef.current[targetPeerId]
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls:'stun:stun.l.google.com:19302' },
+        { urls:'stun:stun1.l.google.com:19302' }
+      ]
+    })
+    const local = localStreamRef.current
+    if (local) local.getTracks().forEach(track => pc.addTrack(track, local))
+    pc.ontrack = (e) => {
+      const stream = e.streams?.[0]
+      if (!stream) return
+      setRemoteStreams(prev => ({ ...prev, [targetPeerId]: stream }))
+    }
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) return
+      sendSignal({ type:'ice', from:peerIdRef.current, to:targetPeerId, payload:e.candidate })
+    }
+    peersRef.current[targetPeerId] = pc
+    return pc
+  }, [sendSignal])
+
+  useEffect(() => {
+    let mounted = true
+    const room = `conf-live-${conference.id}`
+    const setup = async () => {
+      try {
+        const local = await navigator.mediaDevices.getUserMedia({ audio:true, video:{ facingMode:'user' } })
+        if (!mounted) {
+          local.getTracks().forEach(t => t.stop())
+          return
+        }
+        localStreamRef.current = local
+        if (localVideoRef.current) localVideoRef.current.srcObject = local
+
+        const ch = sb.channel(room)
+          .on('broadcast', { event:'signal' }, async ({ payload }: { payload: LiveSignal }) => {
+            const msg = payload
+            if (!msg || msg.from === peerIdRef.current) return
+            if (msg.to && msg.to !== peerIdRef.current) return
+            if (msg.bizName) setRemoteNames(prev => ({ ...prev, [msg.from]: msg.bizName || 'Guest' }))
+            if (msg.bizId) setRemoteBizIds(prev => ({ ...prev, [msg.from]: msg.bizId }))
+
+            if (msg.type === 'join') {
+              const pc = createPeer(msg.from)
+              const offer = await pc.createOffer()
+              await pc.setLocalDescription(offer)
+              sendSignal({ type:'offer', from:peerIdRef.current, to:msg.from, payload:offer, bizName:myBiz.name, bizId:myBiz.id })
+            }
+
+            if (msg.type === 'offer') {
+              const pc = createPeer(msg.from)
+              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload))
+              const answer = await pc.createAnswer()
+              await pc.setLocalDescription(answer)
+              sendSignal({ type:'answer', from:peerIdRef.current, to:msg.from, payload:answer, bizName:myBiz.name, bizId:myBiz.id })
+            }
+
+            if (msg.type === 'answer') {
+              const pc = createPeer(msg.from)
+              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload))
+            }
+
+            if (msg.type === 'ice') {
+              const pc = createPeer(msg.from)
+              if (msg.payload) await pc.addIceCandidate(new RTCIceCandidate(msg.payload))
+            }
+
+            if (msg.type === 'leave') cleanupPeer(msg.from)
+          })
+          .subscribe((status: string) => {
+            if (status === 'SUBSCRIBED') {
+              sendSignal({ type:'join', from:peerIdRef.current, bizName:myBiz.name, bizId:myBiz.id })
+              setStarting(false)
+            }
+          })
+
+        channelRef.current = ch
+      } catch {
+        setStarting(false)
+      }
+    }
+
+    setup()
+    return () => {
+      mounted = false
+      sendSignal({ type:'leave', from:peerIdRef.current })
+      const ch = channelRef.current
+      if (ch) sb.removeChannel(ch)
+      Object.keys(peersRef.current).forEach(cleanupPeer)
+      const local = localStreamRef.current
+      if (local) local.getTracks().forEach(t => t.stop())
+      localStreamRef.current = null
+      channelRef.current = null
+    }
+  }, [conference.id, createPeer, cleanupPeer, myBiz.name, sendSignal])
+
+  const toggleMic = () => {
+    const local = localStreamRef.current
+    if (!local) return
+    const next = !micOn
+    local.getAudioTracks().forEach(t => { t.enabled = next })
+    setMicOn(next)
+  }
+
+  const toggleCam = () => {
+    const local = localStreamRef.current
+    if (!local) return
+    const next = !camOn
+    local.getVideoTracks().forEach(t => { t.enabled = next })
+    setCamOn(next)
+  }
+
+  const remotes = Object.entries(remoteStreams)
+
+  const leaveRoom = async () => {
+    if (ending) return
+    setEnding(true)
+    try {
+      const dateKey = new Date().toISOString().slice(0, 10)
+      const marker = `[CONF_CALL_HISTORY:${conference.id}:${dateKey}]`
+      const ids = Array.from(new Set(Object.values(remoteBizIds).filter(id => id && id !== myBiz.id)))
+      const names = Array.from(new Set(Object.entries(remoteBizIds).map(([peer, id]) => ({ id, name: remoteNames[peer] || 'Business' })).filter(x => x.id && x.id !== myBiz.id).map(x => x.name)))
+      if (ids.length) {
+        for (const pid of ids) {
+          const { data: chatId } = await sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:pid })
+          if (!chatId) continue
+          const { count } = await sb.from('messages').select('id', { count:'exact', head:true }).eq('chat_id', chatId).ilike('text', `%${marker}%`)
+          if ((count || 0) > 0) continue
+          const text = `${marker} Conference call summary (${fmtDate(new Date().toISOString())}): You were on call with ${names.join(', ')}. You can choose to connect with them if you'd like.`
+          await sb.from('messages').insert({ chat_id:chatId, sender_id:myBiz.id, text })
+        }
+      }
+    } finally {
+      onBack()
+    }
+  }
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:11, padding:'11px 15px 9px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
+        <button onClick={leaveRoom} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:20, cursor:'pointer', padding:'2px 5px', flexShrink:0 }}>←</button>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>🔴 Live: {conference.title}</div>
+          <div style={{ fontSize:10.5, color:'#7A92B0' }}>{conference.industry} · {conference.location}</div>
+        </div>
+      </div>
+
+      <div style={{ flex:1, overflowY:'auto', padding:12 }}>
+        {starting && <div style={{ fontSize:12, color:'#7A92B0', marginBottom:8 }}>Starting camera and joining live room…</div>}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, minmax(0,1fr))', gap:9 }}>
+          <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, overflow:'hidden' }}>
+            <video ref={localVideoRef} autoPlay muted playsInline style={{ width:'100%', height:140, objectFit:'cover' }} />
+            <div style={{ padding:'6px 8px', fontSize:11, fontWeight:700 }}>You ({myBiz.name})</div>
+          </div>
+          {remotes.map(([pid, stream]) => (
+            <div key={pid} style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, overflow:'hidden' }}>
+              <video autoPlay playsInline style={{ width:'100%', height:140, objectFit:'cover' }} ref={el => { if (el && el.srcObject !== stream) el.srcObject = stream }} />
+              <div style={{ padding:'6px 8px', fontSize:11, fontWeight:700, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{remoteNames[pid] || 'Guest'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding:'10px 12px calc(10px + env(safe-area-inset-bottom,0px))', borderTop:'1px solid rgba(255,255,255,0.07)', display:'flex', gap:8 }}>
+        <button className="btn btn-ghost" style={{ flex:1 }} onClick={toggleMic}>{micOn ? '🎤 Mic On' : '🔇 Mic Off'}</button>
+        <button className="btn btn-ghost" style={{ flex:1 }} onClick={toggleCam}>{camOn ? '📷 Cam On' : '📷 Cam Off'}</button>
+        <button className="btn btn-red" style={{ flex:1 }} onClick={leaveRoom} disabled={ending}>{ending ? 'Saving…' : 'Leave'}</button>
+      </div>
+    </div>
+  )
 }
 
 function BookForm({ onDone, onBack }: any) {
@@ -702,34 +1055,74 @@ return (
 }
 
 // ── GO RANDOM ─────────────────────────────────────────────────────
-const MATCHES = [
-{ id:'r1', name:'Aisha Al-Rashid', role:'Founder · Bloom Organics', loc:'Dubai, UAE', av:'🧑‍💼', score:88, tags:['Food & Bev','Organic'], kyc:true },
-{ id:'r2', name:'James Okafor', role:'CEO · BuildRight Africa', loc:'Lagos, Nigeria', av:'👨‍💼', score:72, tags:['Construction','B2B'], kyc:true },
-{ id:'r3', name:'Mei Lin Zhang', role:'Director · SilkRoute Fashion', loc:'Shanghai, China', av:'👩‍💼', score:91, tags:['Fashion','OEM'], kyc:true },
-{ id:'r4', name:'Carlos Mendez', role:'Founder · TechLab LATAM', loc:'Bogotá, Colombia', av:'🧑‍💻', score:65, tags:['SaaS','Tech'], kyc:false },
-{ id:'r5', name:'Fatima Hassan', role:'MD · Gulf Pharma', loc:'Riyadh, KSA', av:'👩‍⚕️', score:96, tags:['Pharma'], kyc:true },
-{ id:'r6', name:'Raj Patel', role:'Co-founder · FinEdge India', loc:'Mumbai, India', av:'👨‍💻', score:83, tags:['FinTech','B2B'], kyc:true },
-{ id:'r7', name:'Sofia Rossi', role:'CEO · LuxCraft Italy', loc:'Milan, Italy', av:'👩‍🎨', score:79, tags:['Luxury','Fashion'], kyc:true },
-]
-
 export function GoRandomPage() {
 const { myBiz, toast } = useApp()
+const [pool, setPool] = useState<Business[]>([])
 const [idx, setIdx] = useState(0)
 const [sessions, setSessions] = useState(0)
 const [connected, setConnected] = useState<Set<string>>(new Set())
 const [fading, setFading] = useState(false)
-const match = MATCHES[idx % MATCHES.length]
-const next = () => { setFading(true); setTimeout(() => { setIdx(i => i+1); setSessions(s => Math.min(3,s+1)); setFading(false) }, 200) }
-const connect = () => {
-if (!myBiz) { toast('Create a profile first', 'info'); return }
-if (connected.has(match.id)) { toast('Already connected!', 'info'); return }
-setConnected(s => new Set([...s, match.id]))
-toast('Connected with ' + match.name + '!')
+const [activeCallWith, setActiveCallWith] = useState<Business|null>(null)
+
+useEffect(() => {
+  if (!myBiz) return
+  sb.from('businesses').select('*').neq('id', myBiz.id).then(({ data }) => setPool(data || []))
+}, [myBiz?.id])
+
+useEffect(() => {
+  if (!myBiz) return
+  sb.from('connections')
+    .select('from_biz_id,to_biz_id')
+    .or(`from_biz_id.eq.${myBiz.id},to_biz_id.eq.${myBiz.id}`)
+    .then(({ data }) => {
+      const ids = new Set<string>()
+      ;(data || []).forEach((c: any) => {
+        const otherId = c.from_biz_id === myBiz.id ? c.to_biz_id : c.from_biz_id
+        if (otherId && otherId !== myBiz.id) ids.add(otherId)
+      })
+      setConnected(ids)
+    })
+}, [myBiz?.id])
+
+const match = pool.length ? pool[idx % pool.length] : null
+const next = () => {
+  if (!pool.length) return
+  setFading(true)
+  setTimeout(() => { setIdx(i => i+1); setSessions(s => Math.min(3,s+1)); setFading(false) }, 200)
 }
+const connect = () => {
+if (!myBiz || !match) { toast('Create a profile first', 'info'); return }
+if (connected.has(match.id)) { toast('Already connected!', 'info'); return }
+sb.from('connections').insert({ from_biz_id:myBiz.id, to_biz_id:match.id }).then(({ error }) => {
+  if (error) {
+    const msg = (error.message || '').toLowerCase()
+    if (msg.includes('duplicate') || msg.includes('unique')) {
+      setConnected(s => new Set([...s, match.id]))
+      toast('Already connected!', 'info')
+      return
+    }
+    toast('Failed to connect: ' + error.message, 'error')
+    return
+  }
+  sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:match.id }).then(() => {})
+  setConnected(s => new Set([...s, match.id]))
+  toast('Connected with ' + match.name + '!')
+})
+}
+
+const startRandomCall = () => {
+  if (!myBiz || !match) { toast('No match found yet', 'info'); return }
+  setActiveCallWith(match)
+}
+
+if (!myBiz) return <div className="empty"><div className="ico">🎲</div><h3>Go Random</h3><p>Create a business profile to start random video calls.</p></div>
+if (!match) return <div className="empty"><div className="ico">🎲</div><h3>No businesses available</h3><p>Ask more businesses to join Bizzkit to start random calls.</p></div>
+if (activeCallWith) return <RandomCallRoom myBiz={myBiz} other={activeCallWith} onBack={() => setActiveCallWith(null)} />
+
 return (
 <div style={{ paddingBottom:16 }}>
 <div className="topbar"><div className="page-title">🎲 Go Random</div><div style={{ fontSize:11, color:'#7A92B0' }}>Speed networking</div></div>
-<div style={{ textAlign:'center', padding:'0 20px 14px', fontSize:12, color:'#7A92B0', lineHeight:1.5 }}>Get matched instantly with a verified business owner from anywhere</div>
+<div style={{ textAlign:'center', padding:'0 20px 14px', fontSize:12, color:'#7A92B0', lineHeight:1.5 }}>Get randomly matched with real businesses and start an in-app video call.</div>
 <div style={{ margin:'0 16px 14px', background:'#1A2D47', borderRadius:20, padding:'18px 15px', border:'1px solid rgba(255,255,255,0.07)', transition:'opacity .2s', opacity:fading?0:1 }}>
 <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:15 }}>
 <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:5, flex:1 }}>
@@ -739,24 +1132,24 @@ return (
 </div>
 <div style={{ width:34, height:34, borderRadius:'50%', background:'#0A1628', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#7A92B0', flexShrink:0 }}>VS</div>
 <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:5, flex:1 }}>
-<div style={{ width:62, height:62, borderRadius:'50%', background:'rgba(255,107,53,0.15)', border:'2.5px solid #FF6B35', display:'flex', alignItems:'center', justifyContent:'center', fontSize:25 }} className={!connected.has(match.id)?'pulse':''}>{match.av}</div>
+<div style={{ width:62, height:62, borderRadius:'50%', background:'rgba(255,107,53,0.15)', border:'2.5px solid #FF6B35', display:'flex', alignItems:'center', justifyContent:'center', fontSize:25 }} className={!connected.has(match.id)?'pulse':''}>{logoText(match.name).slice(0,1)}</div>
 <div style={{ fontFamily:'Syne, sans-serif', fontSize:11, fontWeight:700, textAlign:'center' }}>{match.name}</div>
-<div style={{ fontSize:10, color:'#7A92B0', textAlign:'center' }}>{match.role}</div>
+<div style={{ fontSize:10, color:'#7A92B0', textAlign:'center' }}>{match.type} · {match.industry}</div>
 </div>
 </div>
 <div style={{ background:'#0A1628', borderRadius:13, padding:'11px 13px' }}>
 <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
 <div>
 <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:5 }}>
-{match.kyc ? <><span className="kyc-dot" /><span style={{ fontSize:10.5, fontWeight:700, color:'#00D4A0' }}>KYC Verified</span></> : <span style={{ fontSize:10.5, color:'#3A5070' }}>Not verified</span>}
+{match.kyc_verified ? <><span className="kyc-dot" /><span style={{ fontSize:10.5, fontWeight:700, color:'#00D4A0' }}>KYC Verified</span></> : <span style={{ fontSize:10.5, color:'#3A5070' }}>Not verified</span>}
 </div>
 <div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
-{match.tags.map(t => <span key={t} style={{ background:'rgba(30,126,247,0.12)', color:'#4D9DFF', fontSize:10, fontWeight:600, padding:'3px 7px', borderRadius:6 }}>{t}</span>)}
+{[match.industry, match.type].filter(Boolean).map(t => <span key={t} style={{ background:'rgba(30,126,247,0.12)', color:'#4D9DFF', fontSize:10, fontWeight:600, padding:'3px 7px', borderRadius:6 }}>{t}</span>)}
 </div>
-<div style={{ fontSize:10.5, color:'#7A92B0', marginTop:5 }}>📍 {match.loc}</div>
+<div style={{ fontSize:10.5, color:'#7A92B0', marginTop:5 }}>📍 {match.city}, {match.country}</div>
 </div>
 <div style={{ textAlign:'right', flexShrink:0 }}>
-<div style={{ fontFamily:'Syne, sans-serif', fontSize:22, fontWeight:800, color:tierColor(tier(match.score)) }}>{match.score}</div>
+<div style={{ fontFamily:'Syne, sans-serif', fontSize:22, fontWeight:800, color:tierColor(tier(match.trust_score||0)) }}>{match.trust_score||0}</div>
 <div style={{ fontSize:10, color:'#7A92B0' }}>Trust Score</div>
 </div>
 </div>
@@ -764,10 +1157,10 @@ return (
 </div>
 <div style={{ display:'flex', gap:9, padding:'0 16px', marginBottom:9 }}>
 <button className="btn btn-ghost" style={{ flex:1 }} onClick={next}>→ Next</button>
-<button className="btn btn-green" style={{ flex:1.4 }} onClick={connect} disabled={connected.has(match.id)}>{connected.has(match.id)?'✓ Connected':'Connect ✓'}</button>
+<button className="btn btn-green" style={{ flex:1.4 }} onClick={startRandomCall}>Start Call</button>
 </div>
 <div style={{ padding:'0 16px', marginBottom:13 }}>
-<button className="btn btn-red btn-full btn-sm" onClick={() => { toast('Report submitted.','info'); next() }}>⚑ Report</button>
+<button className="btn btn-blue btn-full btn-sm" onClick={connect} disabled={connected.has(match.id)}>{connected.has(match.id)?'✓ Connected':'Connect ✓'}</button>
 </div>
 <div style={{ margin:'0 16px', background:'#152236', borderRadius:13, padding:'11px 13px', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
 <div>
@@ -775,7 +1168,7 @@ return (
 <div style={{ display:'flex', gap:5 }}>{Array.from({length:3}).map((_,i) => <div key={i} style={{ width:26, height:7, borderRadius:4, background:i<sessions?'#3A5070':'#00D4A0' }} />)}</div>
 </div>
 <div style={{ textAlign:'right' }}>
-<div style={{ fontSize:11, color:'#7A92B0' }}>{sessions} used · {Math.max(0,3-sessions)} left</div>
+<div style={{ fontSize:11, color:'#7A92B0' }}>{sessions} matches viewed</div>
 <div style={{ fontSize:11, color:'#1E7EF7', fontWeight:700, cursor:'pointer', marginTop:3 }} onClick={() => toast('Upgrade for unlimited sessions!','info')}>Upgrade →</div>
 </div>
 </div>
@@ -783,21 +1176,185 @@ return (
 )
 }
 
+function RandomCallRoom({ myBiz, other, onBack }: { myBiz: Business; other: Business; onBack: () => void }) {
+  const [remoteStream, setRemoteStream] = useState<MediaStream|null>(null)
+  const [micOn, setMicOn] = useState(true)
+  const [camOn, setCamOn] = useState(true)
+  const [starting, setStarting] = useState(true)
+  const localVideoRef = useRef<HTMLVideoElement|null>(null)
+  const localStreamRef = useRef<MediaStream|null>(null)
+  const channelRef = useRef<any>(null)
+  const peerRef = useRef<RTCPeerConnection|null>(null)
+  const peerIdRef = useRef<string>(`rand-${Date.now()}-${Math.random().toString(36).slice(2,8)}`)
+
+  const room = `random-${[myBiz.id, other.id].sort().join('-').replace(/-/g, '').slice(0, 36)}`
+
+  const sendSignal = useCallback((sig: LiveSignal) => {
+    const ch = channelRef.current
+    if (!ch) return
+    ch.send({ type:'broadcast', event:'signal', payload:sig })
+  }, [])
+
+  const createPeer = useCallback(() => {
+    if (peerRef.current) return peerRef.current
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls:'stun:stun.l.google.com:19302' }, { urls:'stun:stun1.l.google.com:19302' }]
+    })
+    const local = localStreamRef.current
+    if (local) local.getTracks().forEach(track => pc.addTrack(track, local))
+    pc.ontrack = (e) => {
+      const stream = e.streams?.[0]
+      if (stream) setRemoteStream(stream)
+    }
+    pc.onicecandidate = (e) => {
+      if (e.candidate) sendSignal({ type:'ice', from:peerIdRef.current, to:'*', payload:e.candidate, bizName:myBiz.name })
+    }
+    peerRef.current = pc
+    return pc
+  }, [myBiz.name, sendSignal])
+
+  useEffect(() => {
+    let mounted = true
+    const setup = async () => {
+      try {
+        const local = await navigator.mediaDevices.getUserMedia({ audio:true, video:{ facingMode:'user' } })
+        if (!mounted) { local.getTracks().forEach(t => t.stop()); return }
+        localStreamRef.current = local
+        if (localVideoRef.current) localVideoRef.current.srcObject = local
+
+        const ch = sb.channel(room)
+          .on('broadcast', { event:'signal' }, async ({ payload }: { payload: LiveSignal }) => {
+            const msg = payload
+            if (!msg || msg.from === peerIdRef.current) return
+            if (msg.type === 'join') {
+              const pc = createPeer()
+              const offer = await pc.createOffer()
+              await pc.setLocalDescription(offer)
+              sendSignal({ type:'offer', from:peerIdRef.current, payload:offer, bizName:myBiz.name })
+            }
+            if (msg.type === 'offer') {
+              const pc = createPeer()
+              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload))
+              const answer = await pc.createAnswer()
+              await pc.setLocalDescription(answer)
+              sendSignal({ type:'answer', from:peerIdRef.current, payload:answer, bizName:myBiz.name })
+            }
+            if (msg.type === 'answer') {
+              const pc = createPeer()
+              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload))
+            }
+            if (msg.type === 'ice') {
+              const pc = createPeer()
+              if (msg.payload) await pc.addIceCandidate(new RTCIceCandidate(msg.payload))
+            }
+          })
+          .subscribe((status: string) => {
+            if (status === 'SUBSCRIBED') {
+              sendSignal({ type:'join', from:peerIdRef.current, bizName:myBiz.name })
+              setStarting(false)
+            }
+          })
+        channelRef.current = ch
+      } catch {
+        setStarting(false)
+      }
+    }
+    setup()
+    return () => {
+      mounted = false
+      const ch = channelRef.current
+      if (ch) sb.removeChannel(ch)
+      const pc = peerRef.current
+      if (pc) pc.close()
+      const local = localStreamRef.current
+      if (local) local.getTracks().forEach(t => t.stop())
+      channelRef.current = null
+      peerRef.current = null
+      localStreamRef.current = null
+    }
+  }, [createPeer, myBiz.name, room, sendSignal])
+
+  const toggleMic = () => {
+    const local = localStreamRef.current
+    if (!local) return
+    const next = !micOn
+    local.getAudioTracks().forEach(t => { t.enabled = next })
+    setMicOn(next)
+  }
+  const toggleCam = () => {
+    const local = localStreamRef.current
+    if (!local) return
+    const next = !camOn
+    local.getVideoTracks().forEach(t => { t.enabled = next })
+    setCamOn(next)
+  }
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:11, padding:'11px 15px 9px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
+        <button onClick={onBack} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:20, cursor:'pointer', padding:'2px 5px', flexShrink:0 }}>←</button>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>🎲 Random Call with {other.name}</div>
+          <div style={{ fontSize:10.5, color:'#7A92B0' }}>{other.industry} · {other.city}, {other.country}</div>
+        </div>
+      </div>
+      <div style={{ flex:1, overflowY:'auto', padding:12 }}>
+        {starting && <div style={{ fontSize:12, color:'#7A92B0', marginBottom:8 }}>Starting random call… waiting for the other business to join this room.</div>}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, minmax(0,1fr))', gap:9 }}>
+          <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, overflow:'hidden' }}>
+            <video ref={localVideoRef} autoPlay muted playsInline style={{ width:'100%', height:150, objectFit:'cover' }} />
+            <div style={{ padding:'6px 8px', fontSize:11, fontWeight:700 }}>You ({myBiz.name})</div>
+          </div>
+          <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, overflow:'hidden' }}>
+            {remoteStream ? (
+              <video autoPlay playsInline style={{ width:'100%', height:150, objectFit:'cover' }} ref={el => { if (el && el.srcObject !== remoteStream) el.srcObject = remoteStream }} />
+            ) : (
+              <div style={{ width:'100%', height:150, display:'flex', alignItems:'center', justifyContent:'center', color:'#7A92B0', fontSize:12 }}>Waiting for {other.name}...</div>
+            )}
+            <div style={{ padding:'6px 8px', fontSize:11, fontWeight:700 }}>{other.name}</div>
+          </div>
+        </div>
+      </div>
+      <div style={{ padding:'10px 12px calc(10px + env(safe-area-inset-bottom,0px))', borderTop:'1px solid rgba(255,255,255,0.07)', display:'flex', gap:8 }}>
+        <button className="btn btn-ghost" style={{ flex:1 }} onClick={toggleMic}>{micOn ? '🎤 Mic On' : '🔇 Mic Off'}</button>
+        <button className="btn btn-ghost" style={{ flex:1 }} onClick={toggleCam}>{camOn ? '📷 Cam On' : '📷 Cam Off'}</button>
+        <button className="btn btn-red" style={{ flex:1 }} onClick={onBack}>End</button>
+      </div>
+    </div>
+  )
+}
+
 // ── TRUST PAGE ────────────────────────────────────────────────────
-export function TrustPage() {
+export function TrustPage({ onOpenKyc }: { onOpenKyc?: ()=>void }) {
 const { myBiz, refreshBiz, toast } = useApp()
 const [certModal, setCertModal] = useState(false)
+const [hasApprovedKyc, setHasApprovedKyc] = useState(false)
 if (!myBiz) return <div className="empty"><div className="ico">🛡️</div><h3>Trust & Verification</h3><p>Create a business profile to build your Trust Score.</p></div>
+
+useEffect(() => {
+  let mounted = true
+  const loadKycStatus = async () => {
+    const { count } = await sb
+      .from('kyc_submissions')
+      .select('id', { count:'exact', head:true })
+      .eq('business_id', myBiz.id)
+      .eq('status', 'approved')
+    const approved = (count || 0) > 0
+    if (!mounted) return
+    setHasApprovedKyc(approved)
+
+    // Self-heal legacy false positives from old instant-verify behavior.
+    if (myBiz.kyc_verified !== approved) {
+      await sb.from('businesses').update({ kyc_verified:approved }).eq('id', myBiz.id)
+      await refreshBiz()
+    }
+  }
+  loadKycStatus()
+  return () => { mounted = false }
+}, [myBiz.id])
 
 const nextThresh = myBiz.trust_score<50?50:myBiz.trust_score<75?75:myBiz.trust_score<90?90:100
 const nextName = nextThresh===50?'Silver':nextThresh===75?'Gold':nextThresh===90?'Platinum':'Max'
-
-const doKYC = async () => {
-if (myBiz.kyc_verified) { toast('Already verified!','info'); return }
-const ns = Math.min(100, myBiz.trust_score+15)
-await sb.from('businesses').update({ kyc_verified:true, trust_score:ns, trust_tier:tier(ns) }).eq('id', myBiz.id)
-await refreshBiz(); toast('✅ KYC complete! +15 Trust Score')
-}
 
 const doCert = async () => {
 const ns = Math.min(100, myBiz.trust_score+12)
@@ -807,7 +1364,7 @@ await refreshBiz(); setCertModal(false); toast('🏅 Certified! +12 Trust Score'
 
 const breakdown = [
 { label:'Profile Completeness', pct:myBiz.description&&myBiz.tagline?95:60 },
-{ label:'KYC Verified', pct:myBiz.kyc_verified?100:0 },
+{ label:'KYC Verified', pct:hasApprovedKyc?100:0 },
 { label:'Business Certified', pct:myBiz.certified?100:0 },
 { label:'Products Listed', pct:Math.min(100,(myBiz.products?.length||0)*20) },
 ]
@@ -821,7 +1378,7 @@ const tiers = [
 
 const boosts = [
 { icon:'📝', label:'Complete your profile', pts:5, action:null, done:!!(myBiz.description&&myBiz.tagline) },
-{ icon:'🪪', label:'KYC Verification', pts:15, action:doKYC, done:myBiz.kyc_verified },
+{ icon:'🪪', label:'KYC Verification', pts:15, action:() => onOpenKyc?.(), done:hasApprovedKyc },
 { icon:'🏅', label:'Business Certification ($19.99)', pts:12, action:() => setCertModal(true), done:myBiz.certified },
 { icon:'📦', label:'Add 5+ products', pts:10, action:null, done:(myBiz.products?.length||0)>=5 },
 ]
@@ -896,6 +1453,117 @@ return (
 ))}
 </div>
 <div style={{ height:8 }} />
+</div>
+)
+}
+
+export function KycFormPage({ onBack }: { onBack?: ()=>void }) {
+const { myBiz, toast } = useApp()
+const [ownerName, setOwnerName] = useState('')
+const [companyReg, setCompanyReg] = useState('')
+const [country, setCountry] = useState(myBiz?.country || '')
+const [idUrl, setIdUrl] = useState('')
+const [uploading, setUploading] = useState(false)
+const [saving, setSaving] = useState(false)
+const [agreed, setAgreed] = useState(false)
+const [err, setErr] = useState('')
+const [submitted, setSubmitted] = useState(false)
+
+if (!myBiz) return <div className="empty"><div className="ico">🛡️</div><h3>KYC Verification</h3><p>Create a business profile first.</p></div>
+
+const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const file = e.target.files?.[0]
+  if (!file) return
+  setErr('')
+  if (file.size > 20 * 1024 * 1024) { setErr('File must be under 20MB'); e.target.value = ''; return }
+  const allowed = file.type.startsWith('image/') || file.type === 'application/pdf'
+  if (!allowed) { setErr('Upload an image or PDF document'); e.target.value = ''; return }
+  setUploading(true)
+  const url = await uploadImage(file, 'kyc-ids')
+  setUploading(false)
+  e.target.value = ''
+  if (!url) { setErr(getLastUploadError() || 'Upload failed'); return }
+  setIdUrl(url)
+  toast('ID uploaded')
+}
+
+const submit = async () => {
+  setErr('')
+  if (!ownerName.trim() || !companyReg.trim() || !country.trim()) { setErr('Please fill all required fields'); return }
+  if (!idUrl) { setErr('Please upload a government ID'); return }
+  if (!agreed) { setErr('Please confirm declaration'); return }
+  setSaving(true)
+  const { data: submission, error: submissionErr } = await sb
+    .from('kyc_submissions')
+    .insert({
+      business_id: myBiz.id,
+      owner_name: ownerName.trim(),
+      company_registration_no: companyReg.trim(),
+      country: country.trim(),
+      document_url: idUrl,
+      status: 'pending'
+    })
+    .select()
+    .single()
+  if (submissionErr) {
+    setSaving(false)
+    setErr('Failed to submit KYC form: ' + submissionErr.message)
+    return
+  }
+  setSubmitted(true)
+  const { data: reviewData, error: reviewErr } = await sb.functions.invoke('review-kyc-submission', {
+    body: { submissionId: submission.id }
+  })
+  setSaving(false)
+  if (reviewErr) {
+    toast('KYC submitted. Review is pending.', 'info')
+    onBack?.()
+    return
+  }
+  if (reviewData?.status === 'approved') {
+    toast('KYC approved by AI reviewer ✅')
+  } else if (reviewData?.status === 'rejected') {
+    toast('KYC rejected. Please correct details and resubmit.', 'error')
+  } else {
+    toast('KYC submitted. Review is pending.', 'info')
+  }
+  onBack?.()
+}
+
+return (
+<div style={{ paddingBottom:20 }}>
+  <div className="topbar">
+    <button onClick={onBack} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:16, cursor:'pointer', padding:'4px 8px' }}>← Back</button>
+    <div className="page-title">KYC Verification</div>
+    <div style={{ width:60 }} />
+  </div>
+  <div style={{ padding:'0 16px' }}>
+    <div style={{ marginBottom:12, fontSize:12, color:'#7A92B0', lineHeight:1.6 }}>
+      Submit your KYC details for manual review. Approval unlocks your verified badge and trust score boost.
+    </div>
+    {submitted && <div style={{ marginBottom:10, color:'#00D4A0', fontSize:12, fontWeight:700 }}>KYC submitted successfully.</div>}
+    <div className="field"><label>Owner/Representative Name *</label><input placeholder="Full legal name" value={ownerName} onChange={e => setOwnerName(e.target.value)} /></div>
+    <div className="field"><label>Company Registration Number *</label><input placeholder="CR / trade license number" value={companyReg} onChange={e => setCompanyReg(e.target.value)} /></div>
+    <div className="field"><label>Country of Registration *</label><input placeholder="Country" value={country} onChange={e => setCountry(e.target.value)} /></div>
+    <div className="field">
+      <label>Government ID / Registration Proof *</label>
+      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <label style={{ padding:'8px 12px', borderRadius:9, background:'#152236', border:'1px solid rgba(255,255,255,0.07)', fontSize:12, color:'#7A92B0', cursor:'pointer', fontWeight:700 }}>
+          {uploading ? 'Uploading...' : idUrl ? 'Change Document' : 'Upload Document'}
+          <input type="file" accept="image/*,.pdf,application/pdf" onChange={handleUpload} style={{ display:'none' }} />
+        </label>
+        {idUrl && <span style={{ fontSize:11, color:'#00D4A0', fontWeight:700 }}>Uploaded</span>}
+      </div>
+    </div>
+    <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:11, padding:'10px 11px', marginBottom:12, display:'flex', gap:8, alignItems:'flex-start' }}>
+      <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} style={{ marginTop:2 }} />
+      <div style={{ fontSize:11.5, color:'#7A92B0', lineHeight:1.5 }}>
+        I confirm the submitted details are accurate and I am authorized to represent this business.
+      </div>
+    </div>
+    {err && <div className="form-err">{err}</div>}
+    <button className="btn btn-blue btn-full" onClick={submit} disabled={saving}>{saving ? 'Submitting...' : 'Submit KYC Form'}</button>
+  </div>
 </div>
 )
 }

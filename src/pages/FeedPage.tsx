@@ -3,13 +3,15 @@ import { sb, Business, INDUSTRIES, grad } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
-  const { myBiz, user, toast } = useApp()
+  const { myBiz, user, toast, setTab } = useApp()
   const [list, setList] = useState<Business[]>([])
+  const [feedView, setFeedView] = useState<'discover'|'connected'>('discover')
   const [filter, setFilter] = useState('All')
   const [search, setSearch] = useState('')
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [conns, setConns] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [notifCount, setNotifCount] = useState(0)
 
   useEffect(() => {
     sb.from('businesses').select('*,products(*)').order('trust_score', { ascending: false })
@@ -20,13 +22,53 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       .then(({ data }) => setConns(new Set((data || []).map((c: any) => c.to_biz_id))))
   }, [myBiz?.id, user?.id])
 
-  const items = list.filter(b => {
+  useEffect(() => {
+    if (!myBiz) { setNotifCount(0); return }
+
+    const loadNotifCount = async () => {
+      const { data: chats, error } = await sb
+        .from('chats')
+        .select('id')
+        .or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
+      if (error || !chats?.length) { setNotifCount(0); return }
+
+      const chatIds = chats.map(c => c.id)
+      const { count } = await sb
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .in('chat_id', chatIds)
+        .neq('sender_id', myBiz.id)
+        .eq('read', false)
+      setNotifCount(count || 0)
+    }
+
+    loadNotifCount()
+  }, [myBiz?.id])
+
+  const openNotifications = () => {
+    if (notifCount > 0) {
+      toast(`You have ${notifCount} unread message${notifCount > 1 ? 's' : ''}`, 'info')
+      setTab('messages')
+      return
+    }
+    toast('No new notifications', 'info')
+  }
+
+  const discoverBase = list.filter(b => !conns.has(b.id))
+  const connectedBase = list.filter(b => conns.has(b.id))
+  const source = feedView === 'connected' ? connectedBase : discoverBase
+
+  const items = source.filter(b => {
     const mf = filter === 'All' || b.industry === filter
     const ms = !search || b.name.toLowerCase().includes(search.toLowerCase())
     return mf && ms
   })
 
-  const trending = items.filter(b => b.trust_score >= 70).slice(0, 4)
+  const trending = discoverBase.filter(b => {
+    const mf = filter === 'All' || b.industry === filter
+    const ms = !search || b.name.toLowerCase().includes(search.toLowerCase())
+    return mf && ms && b.trust_score >= 70
+  }).slice(0, 4)
 
   const doSave = async (b: Business) => {
     if (!user) { toast('Sign in to save', 'info'); return }
@@ -44,11 +86,10 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const doConnect = async (b: Business) => {
     if (!myBiz) { toast('Create a business profile first', 'info'); return }
     if (conns.has(b.id)) { toast('Already connected!', 'info'); return }
-    await sb.from('connections').insert([
-      { from_biz_id: myBiz.id, to_biz_id: b.id },
-      { from_biz_id: b.id, to_biz_id: myBiz.id }
-    ])
-    await sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: b.id })
+    const { error: connErr } = await sb.from('connections').insert({ from_biz_id: myBiz.id, to_biz_id: b.id })
+    if (connErr) { toast('Failed to connect: ' + connErr.message, 'error'); return }
+    const { error: chatErr } = await sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: b.id })
+    if (chatErr) { toast('Connected, but chat setup failed', 'info') }
     setConns(s => new Set([...s, b.id]))
     toast('Connected with ' + b.name + '!')
   }
@@ -57,26 +98,46 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     <div style={{ paddingBottom:16 }}>
       <div className="topbar">
         <div className="logo-txt">bizz<span>kit</span></div>
-        <div style={{ display:'flex', gap:7 }}>
-          <div className="icon-btn" onClick={() => toast('No new notifications', 'info')}>🔔</div>
-          {myBiz && <div className="avatar-btn">{myBiz.logo.slice(0,2)}</div>}
+        <div style={{ position:'relative' }}>
+          <div className="icon-btn" onClick={openNotifications}>🔔</div>
+          {notifCount > 0 && (
+            <div style={{ position:'absolute', top:-4, right:-4, minWidth:18, height:18, borderRadius:9, background:'#FF4B6E', color:'#fff', fontSize:10, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 5px' }}>
+              {notifCount > 9 ? '9+' : notifCount}
+            </div>
+          )}
         </div>
       </div>
 
       <div className="search-wrap">
         <span style={{ fontSize:15, color:'#7A92B0' }}>🔍</span>
-        <input placeholder="Search businesses…" value={search} onChange={e => setSearch(e.target.value)} />
+        <input placeholder={feedView==='connected'?'Search connected businesses…':'Search businesses…'} value={search} onChange={e => setSearch(e.target.value)} />
         {search && <span style={{ cursor:'pointer', color:'#7A92B0', fontSize:18 }} onClick={() => setSearch('')}>×</span>}
       </div>
 
-      {!search && (
-        <div style={{ margin:'0 16px 15px', borderRadius:18, padding:'18px 18px 16px', background:'linear-gradient(135deg,#0C2340,#1A3D6E)', position:'relative', overflow:'hidden' }}>
-          <div style={{ fontFamily:'Syne, sans-serif', fontSize:17, fontWeight:800, color:'#fff', marginBottom:12, lineHeight:1.3 }}>
-            MENA Tech<br /><span style={{ color:'#FF6B35' }}>Showcase 2026</span>
-          </div>
-          <button className="btn btn-blue btn-sm" onClick={() => toast('Opening MENA Tech Showcase', 'info')}>Explore Now</button>
-        </div>
-      )}
+      <div style={{ margin:'0 16px 12px', display:'flex', background:'#152236', borderRadius:12, padding:4, border:'1px solid rgba(255,255,255,0.07)' }}>
+        {([
+          { id:'discover', label:'Feed' },
+          { id:'connected', label:'Connected Businesses' }
+        ] as const).map(v => (
+          <button
+            key={v.id}
+            onClick={() => setFeedView(v.id)}
+            style={{
+              flex:1,
+              border:'none',
+              borderRadius:9,
+              padding:'8px 10px',
+              cursor:'pointer',
+              background:feedView===v.id?'#1E7EF7':'transparent',
+              color:feedView===v.id?'#fff':'#7A92B0',
+              fontSize:11.5,
+              fontWeight:700
+            }}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
 
       <div className="chips">
         {['All', ...INDUSTRIES.slice(0,6)].map(i => (
@@ -88,7 +149,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>
       ) : (
         <>
-          {!search && trending.length > 0 && (
+          {!search && feedView === 'discover' && trending.length > 0 && (
             <>
               <div className="sec-hd"><h3>Trending</h3><span className="see-all">See all</span></div>
               <div style={{ display:'flex', gap:11, padding:'0 16px 4px', overflowX:'auto' }}>
@@ -113,11 +174,17 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
           )}
 
           <div className="sec-hd">
-            <h3>{search ? `"${search}"` : 'All Businesses'}</h3>
+            <h3>{search ? `"${search}"` : feedView === 'connected' ? 'Connected Businesses' : 'All Businesses'}</h3>
             <span className="see-all">{items.length} found</span>
           </div>
 
-          {items.length === 0 && <div className="empty"><div className="ico">🔍</div><h3>No businesses found</h3><p>Try a different search</p></div>}
+          {items.length === 0 && (
+            <div className="empty">
+              <div className="ico">{feedView === 'connected' ? '🤝' : '🔍'}</div>
+              <h3>{feedView === 'connected' ? 'No connected businesses yet' : 'No businesses found'}</h3>
+              <p>{feedView === 'connected' ? 'Connect with businesses from the Feed tab.' : 'Try a different search'}</p>
+            </div>
+          )}
 
           {items.map(b => {
             const isSaved = saved.has(b.id)
@@ -151,9 +218,11 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                   <button onClick={() => toast('RFQ sent to ' + b.name, 'info')} style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:4, fontSize:11, fontWeight:600, color:'#7A92B0', background:'none', border:'none', flex:1, padding:5, borderRadius:7, cursor:'pointer' }}>
                     📋 RFQ
                   </button>
-                  <button onClick={() => doConnect(b)} className={`btn btn-sm ${isConn?'btn-ghost':'btn-blue'}`} style={{ flexShrink:0 }}>
-                    {isConn ? '✓ Connected' : 'Connect'}
-                  </button>
+                  {feedView === 'discover' && (
+                    <button onClick={() => doConnect(b)} className={`btn btn-sm ${isConn?'btn-ghost':'btn-blue'}`} style={{ flexShrink:0 }}>
+                      {isConn ? '✓ Connected' : 'Connect'}
+                    </button>
+                  )}
                 </div>
               </div>
             )

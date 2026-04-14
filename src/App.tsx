@@ -3,7 +3,7 @@ import { useApp } from './context/ctx'
 import AuthPage from './pages/AuthPage'
 import FeedPage from './pages/FeedPage'
 import MessagesPage from './pages/MessagesPage'
-import { ProfilePage, ConferencePage, GoRandomPage, TrustPage } from './pages/OtherPages'
+import { ProfilePage, ConferencePage, GoRandomPage, TrustPage, KycFormPage } from './pages/OtherPages'
 
 const NAV = [
   { id:'feed',       icon:'🏠', label:'Feed'    },
@@ -43,7 +43,8 @@ export default function App() {
     if (tab==='conference') return <ConferencePage />
     if (tab==='random')     return <GoRandomPage />
     if (tab==='messages')   return <MessagesPage openWith={chatWith} onClearOpen={() => setChatWith(null)} />
-    if (tab==='trust')      return <TrustPage />
+    if (tab==='trust')      return <TrustPage onOpenKyc={() => go('kyc')} />
+    if (tab==='kyc')        return <KycFormPage onBack={() => go('trust')} />
     return <FeedPage onView={viewBiz} />
   }
 
@@ -58,7 +59,7 @@ export default function App() {
       </div>
       <nav className="bnav">
         {NAV.map(n => (
-          <div key={n.id} className={`bni${tab===n.id||(n.id==='profile'&&tab==='trust')?' on':''}`} onClick={() => go(n.id)}>
+          <div key={n.id} className={`bni${tab===n.id||(n.id==='profile'&&(tab==='trust'||tab==='kyc'))?' on':''}`} onClick={() => go(n.id)}>
             <div className="bni-ico">
               {n.icon}
               {n.id==='messages'&&unread>0&&<div className="bni-badge">{unread>9?'9+':unread}</div>}

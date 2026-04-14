@@ -83,6 +83,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (user) refreshBiz()
   }, [user])
 
+  useEffect(() => {
+    if (!myBiz?.id) { setUnread(0); return }
+
+    let active = true
+    const refreshUnread = async () => {
+      const { data: chats } = await sb.from('chats').select('id').or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
+      const chatIds = (chats || []).map((c: { id: string }) => c.id)
+      if (!chatIds.length) { if (active) setUnread(0); return }
+      const { count } = await sb.from('messages').select('id', { count:'exact', head:true }).in('chat_id', chatIds).neq('sender_id', myBiz.id).eq('read', false)
+      if (active) setUnread(count || 0)
+    }
+
+    refreshUnread()
+    const ch = sb.channel('global-unread-' + myBiz.id)
+      .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, refreshUnread)
+      .on('postgres_changes', { event:'UPDATE', schema:'public', table:'messages' }, refreshUnread)
+      .subscribe()
+
+    return () => {
+      active = false
+      sb.removeChannel(ch)
+    }
+  }, [myBiz?.id])
+
   return (
     <AppCtx.Provider value={{
       user, myBiz, loading,

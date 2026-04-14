@@ -2,6 +2,20 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo } from '../lib/db'
 import { useApp } from '../context/ctx'
 
+const normalizeLogoImage = (value?: string | null): string | null => {
+  if (!value) return null
+  let v = value.trim()
+  if (!v) return null
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1).trim()
+  if (!v) return null
+  if (v.startsWith('data:')) return v
+  if (v.startsWith('http://') || v.startsWith('https://') || v.startsWith('/')) return v
+  if (/^[A-Za-z0-9+/=]+$/.test(v) && v.length > 120) return `data:image/jpeg;base64,${v}`
+  return null
+}
+
+const logoInitials = (name?: string) => (name || '').split(' ').slice(0,2).map(w => w[0] || '').join('').toUpperCase() || 'BK'
+
 export default function MessagesPage({ openWith, onClearOpen }: { openWith?: string|null; onClearOpen?: () => void }) {
   const { myBiz, setUnread, toast } = useApp()
   const [chats, setChats] = useState<Chat[]>([])
@@ -55,8 +69,10 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
         if (!c.other_biz) return null
         return (
           <div key={c.id} onClick={() => setActiveId(c.id)} style={{ display:'flex', alignItems:'center', gap:11, padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', cursor:'pointer' }}>
-            <div className={grad(c.other_biz.id)} style={{ width:46, height:46, borderRadius:13, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, position:'relative' }}>
-              {c.other_biz.logo}
+            <div className={grad(c.other_biz.id)} style={{ width:46, height:46, borderRadius:13, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, position:'relative', overflow:'hidden' }}>
+              {normalizeLogoImage(c.other_biz.logo)
+                ? <img src={normalizeLogoImage(c.other_biz.logo) || ''} alt={c.other_biz.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+                : logoInitials(c.other_biz.name)}
               {(c.unread||0) > 0 && <div className="bni-badge">{c.unread}</div>}
             </div>
             <div style={{ flex:1, minWidth:0 }}>
@@ -145,7 +161,11 @@ function ChatView({ chatId, other, myId, onBack, toast }: { chatId:string; other
     <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
       <div style={{ display:'flex', alignItems:'center', gap:11, padding:'11px 15px 9px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
         <button onClick={onBack} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:20, cursor:'pointer', padding:'2px 5px', flexShrink:0 }}>←</button>
-        {other && <div className={grad(other.id)} style={{ width:38, height:38, borderRadius:11, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:14, color:'#fff', flexShrink:0 }}>{other.logo}</div>}
+        {other && <div className={grad(other.id)} style={{ width:38, height:38, borderRadius:11, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:14, color:'#fff', flexShrink:0, overflow:'hidden' }}>
+          {normalizeLogoImage(other.logo)
+            ? <img src={normalizeLogoImage(other.logo) || ''} alt={other.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+            : logoInitials(other.name)}
+        </div>}
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{other?.name||'Chat'}</div>
           <div style={{ fontSize:10.5, color:'#7A92B0' }}>{other?.industry} · {other?.city}</div>
@@ -164,7 +184,11 @@ function ChatView({ chatId, other, myId, onBack, toast }: { chatId:string; other
               const mine = m.sender_id === myId
               return (
                 <div key={m.id} style={{ display:'flex', flexDirection:mine?'row-reverse':'row', alignItems:'flex-end', gap:5, marginBottom:4 }}>
-                  {!mine && other && i === 0 && <div className={grad(other.id)} style={{ width:26, height:26, borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#fff', flexShrink:0 }}>{other.logo}</div>}
+                  {!mine && other && i === 0 && <div className={grad(other.id)} style={{ width:26, height:26, borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#fff', flexShrink:0, overflow:'hidden' }}>
+                    {normalizeLogoImage(other.logo)
+                      ? <img src={normalizeLogoImage(other.logo) || ''} alt={other.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+                      : logoInitials(other.name)}
+                  </div>}
                   {!mine && i > 0 && <div style={{ width:26, flexShrink:0 }} />}
                   <div style={{ maxWidth:'72%' }}>
                     <div style={{ padding:'8px 11px', borderRadius:mine?'14px 14px 4px 14px':'14px 14px 14px 4px', background:mine?'#1E7EF7':'#1A2D47', color:'#fff', fontSize:13, lineHeight:1.5, border:mine?'none':'1px solid rgba(255,255,255,0.07)' }}>{m.text}</div>
