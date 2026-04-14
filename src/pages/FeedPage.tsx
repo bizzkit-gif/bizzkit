@@ -31,19 +31,33 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [conns, setConns] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
-  const [connsReady, setConnsReady] = useState(false)
   const [notifCount, setNotifCount] = useState(0)
 
   useEffect(() => {
-    sb.from('businesses').select('*,products(*)').order('trust_score', { ascending: false })
-      .then(({ data }) => { setList((data || []).filter(b => b.id !== myBiz?.id)); setLoading(false) })
-    if (user) sb.from('saved_businesses').select('business_id').eq('user_id', user.id)
-      .then(({ data }) => setSaved(new Set((data || []).map((s: any) => s.business_id))))
-    if (!myBiz) { setConns(new Set()); setConnsReady(true); return }
-    setConnsReady(false)
-    sb.from('connections').select('to_biz_id').eq('from_biz_id', myBiz.id)
-      .then(({ data }) => setConns(new Set((data || []).map((c: any) => c.to_biz_id))))
-      .finally(() => setConnsReady(true))
+    let active = true
+    const loadFeedData = async () => {
+      setLoading(true)
+      let ownBizId = myBiz?.id || null
+      if (!ownBizId && user?.id) {
+        const { data: ownBiz } = await sb.from('businesses').select('id').eq('owner_id', user.id).single()
+        ownBizId = ownBiz?.id || null
+      }
+
+      const [{ data: businesses }, { data: savedRows }, connsRes] = await Promise.all([
+        sb.from('businesses').select('*,products(*)').order('trust_score', { ascending: false }),
+        user?.id ? sb.from('saved_businesses').select('business_id').eq('user_id', user.id) : Promise.resolve({ data: [] as any[] }),
+        ownBizId ? sb.from('connections').select('to_biz_id').eq('from_biz_id', ownBizId) : Promise.resolve({ data: [] as any[] })
+      ])
+
+      if (!active) return
+      setList((businesses || []).filter(b => b.id !== ownBizId))
+      setSaved(new Set((savedRows || []).map((s: any) => s.business_id)))
+      setConns(new Set(((connsRes.data as any[]) || []).map((c: any) => c.to_biz_id)))
+      setLoading(false)
+    }
+
+    loadFeedData()
+    return () => { active = false }
   }, [myBiz?.id, user?.id])
 
   useEffect(() => {
@@ -169,7 +183,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         ))}
       </div>
 
-      {loading || !connsReady ? (
+      {loading ? (
         <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>
       ) : (
         <>
