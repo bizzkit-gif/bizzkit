@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, EMOJIS, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError } from '../lib/db'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 const GRADS = ['gr1','gr2','gr3','gr4','gr5','gr6','gr7','gr8']
@@ -317,7 +317,6 @@ return (
 // ── BIZ FORM ──────────────────────────────────────────────────────
 function BizForm({ existing, onSaved, onCancel }: { existing?:Business; onSaved:()=>void; onCancel?:()=>void }) {
 const { user, toast } = useApp()
-const [step, setStep] = useState(0)
 const [name, setName] = useState(existing?.name||'')
 const [tagline, setTagline] = useState(existing?.tagline||'')
 const [desc, setDesc] = useState(existing?.description||'')
@@ -327,17 +326,11 @@ const [city, setCity] = useState(existing?.city||'')
 const [country, setCountry] = useState(existing?.country||'')
 const [website, setWebsite] = useState(existing?.website||'')
 const [founded, setFounded] = useState(existing?.founded||'')
-const [products, setProducts] = useState<any[]>(existing?.products||[])
-const [pEmoji, setPEmoji] = useState('📦')
-const [pName, setPName] = useState('')
-const [pPrice, setPPrice] = useState('')
-const [pImageUrl, setPImageUrl] = useState('')
 const [err, setErr] = useState('')
 const [saving, setSaving] = useState(false)
 const [uploading, setUploading] = useState(false)
 const [logoUrl, setLogoUrl] = useState(normalizeLogoImage(existing?.logo) || '')
 const logoInputRef = useRef<HTMLInputElement | null>(null)
-const productMediaInputRef = useRef<HTMLInputElement | null>(null)
 const lgo = getLogo(name)
 
 const compressImageToDataUrl = (file: File, maxSide = 640, quality = 0.8): Promise<string> => new Promise((resolve, reject) => {
@@ -407,24 +400,6 @@ setUploading(false)
 e.target.value = ''
 }
 
-const handleProductMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-const file = e.target.files?.[0]
-if (!file) return
-if (file.size > 50 * 1024 * 1024) { setErr('File must be under 50MB'); return }
-setErr('')
-setUploading(true)
-const folder = file.type.startsWith('video/') ? 'videos' : 'products'
-const url = await uploadImage(file, folder)
-if (url) { setPImageUrl(url); toast('Media uploaded!') }
-else {
-  const msg = getLastUploadError() || 'Upload failed - please try again'
-  setErr(msg)
-  toast(msg, 'error')
-}
-setUploading(false)
-e.target.value = ''
-}
-
 const validate = () => {
 if (!name.trim()) { setErr('Business name required'); return false }
 if (!ind) { setErr('Select an industry'); return false }
@@ -442,24 +417,10 @@ if (existing) {
 const { error } = await sb.from('businesses').update(data).eq('id', existing.id)
 if (error) { setSaving(false); setErr(error.message); toast('Failed to save profile', 'error'); return }
 } else {
-const { data:biz, error } = await sb.from('businesses').insert(data).select().single()
+const { error } = await sb.from('businesses').insert(data).select().single()
 if (error) { setSaving(false); setErr(error.message); toast('Failed to create profile', 'error'); return }
-if (biz && products.length) await sb.from('products').insert(products.map(p => ({ ...p, business_id:biz.id })))
 }
 setSaving(false); onSaved()
-}
-
-const addProd = () => {
-if (!pName.trim()) return
-if (existing) sb.from('products').insert({ business_id:existing.id, name:pName, price:pPrice, emoji:pEmoji, image_url:pImageUrl||null }).then(() => {})
-setProducts(p => [...p, { name:pName, price:pPrice, emoji:pEmoji, image_url:pImageUrl }])
-setPName(''); setPPrice(''); setPImageUrl('')
-}
-
-const removeProd = async (i: number) => {
-const p = products[i]
-if (p.id) await sb.from('products').delete().eq('id', p.id)
-setProducts(prev => prev.filter((_,j) => j!==i))
 }
 
 return (
@@ -468,12 +429,6 @@ return (
 <div className="page-title">{existing?'Edit Profile':'Create Profile'}</div>
 {onCancel && <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>}
 </div>
-<div style={{ display:'flex', margin:'0 16px 18px', background:'#152236', borderRadius:12, padding:4, border:'1px solid rgba(255,255,255,0.07)' }}>
-{['Business Info','Products & Services'].map((l,i) => (
-<button key={i} onClick={() => { if(i===1 && validate()) setStep(1); if(i===0) setStep(0) }} style={{ flex:1, padding:'8px 0', border:'none', borderRadius:9, background:step===i?'#1E7EF7':'transparent', color:step===i?'#fff':'#7A92B0', fontSize:12.5, fontWeight:700, cursor:'pointer' }}>{l}</button>
-))}
-</div>
-{step === 0 && (
 <div style={{ padding:'0 16px' }}>
 <div style={{ textAlign:'center', marginBottom:18 }}>
 <div style={{ position:'relative', display:'inline-block' }}>
@@ -510,60 +465,9 @@ return (
 {err && <div className="form-err">{err}</div>}
 <div style={{ height:92 }} />
 </div>
-)}
-{step === 0 && (
 <div style={{ position:'sticky', bottom:0, zIndex:20, padding:'10px 16px calc(10px + env(safe-area-inset-bottom,0px))', background:'linear-gradient(to top, rgba(10,22,40,0.98) 70%, rgba(10,22,40,0))' }}>
-<button className="btn btn-blue btn-full" onClick={() => validate() && setStep(1)}>Next: Add Products →</button>
-<button className="btn btn-ghost btn-full" style={{ marginTop:8 }} onClick={save} disabled={saving}>{saving?'Saving...':'Save & Skip Products'}</button>
+<button className="btn btn-blue btn-full" onClick={save} disabled={saving}>{saving?'Saving...':existing?'Save Changes':'Create Profile'}</button>
 </div>
-)}
-{step === 1 && (
-<div style={{ padding:'0 16px' }}>
-{products.map((p,i) => (
-<div key={i} style={{ display:'flex', alignItems:'center', gap:9, padding:'9px 11px', background:'#152236', borderRadius:11, marginBottom:7, border:'1px solid rgba(255,255,255,0.07)' }}>
-{p.image_url ? <img src={p.image_url} alt={p.name} style={{ width:32, height:32, borderRadius:8, objectFit:'cover' as const }} /> : <span style={{ fontSize:20 }}>{p.emoji}</span>}
-<div style={{ flex:1 }}><div style={{ fontWeight:700, fontSize:12.5 }}>{p.name}</div><div style={{ fontSize:11, color:'#4D9DFF', fontWeight:700 }}>{p.price}</div></div>
-<button onClick={() => removeProd(i)} style={{ background:'none', border:'none', color:'#FF4B6E', fontSize:16, cursor:'pointer' }}>×</button>
-</div>
-))}
-{products.length === 0 && <div style={{ textAlign:'center', color:'#7A92B0', fontSize:13, padding:'16px 0' }}>No products or services yet</div>}
-<div style={{ background:'#1A2D47', borderRadius:13, padding:13, border:'1px solid rgba(255,255,255,0.07)', marginBottom:14 }}>
-<div style={{ fontFamily:'Syne, sans-serif', fontWeight:700, fontSize:13, marginBottom:10 }}>Add a Product / Service</div>
-<div style={{ display:'flex', gap:5, flexWrap:'wrap', marginBottom:10 }}>
-{EMOJIS.map(em => <div key={em} onClick={() => setPEmoji(em)} style={{ width:34, height:34, borderRadius:9, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, cursor:'pointer', background:pEmoji===em?'#1E7EF7':'#152236', border:`1px solid ${pEmoji===em?'#1E7EF7':'rgba(255,255,255,0.07)'}` }}>{em}</div>)}
-</div>
-<div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
-<div className="field" style={{ marginBottom:0 }}><label>Name *</label><input placeholder="Product or service name" value={pName} onChange={e => setPName(e.target.value)} /></div>
-<div className="field" style={{ marginBottom:0 }}><label>Price</label><input placeholder="$99/mo" value={pPrice} onChange={e => setPPrice(e.target.value)} /></div>
-</div>
-<div style={{ marginBottom:10 }}>
-<label style={{ display:'block', fontSize:11.5, fontWeight:600, color:'#7A92B0', marginBottom:5 }}>Photo or Video (optional)</label>
-<div style={{ display:'flex', alignItems:'center', gap:10 }}>
-{pImageUrl && (
-pImageUrl.includes('/videos/') ?
-<video src={pImageUrl} style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} /> :
-<img src={pImageUrl} alt="preview" style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} />
-)}
-<label htmlFor="product-media-upload" style={{ padding:'8px 14px', borderRadius:9, background:'#152236', border:'1px solid rgba(255,255,255,0.07)', fontSize:11.5, color:'#7A92B0', cursor:'pointer', fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
-{uploading ? '⏳ Uploading...' : '📷 Upload Photo / Video'}
-</label>
-<input ref={productMediaInputRef} id="product-media-upload" type="file" accept="image/*,video/*" onChange={handleProductMediaUpload} style={{ position:'absolute', left:'-9999px', width:1, height:1, opacity:0 }} />
-{pImageUrl && <button onClick={() => setPImageUrl('')} style={{ background:'none', border:'none', color:'#FF4B6E', fontSize:18, cursor:'pointer' }}>×</button>}
-</div>
-</div>
-<button className="btn btn-accent btn-full btn-sm" onClick={addProd}>+ Add Product / Service</button>
-</div>
-<div style={{ height:82 }} />
-</div>
-)}
-{step === 1 && (
-<div style={{ position:'sticky', bottom:0, zIndex:20, padding:'10px 16px calc(10px + env(safe-area-inset-bottom,0px))', background:'linear-gradient(to top, rgba(10,22,40,0.98) 70%, rgba(10,22,40,0))' }}>
-<div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:9 }}>
-<button className="btn btn-ghost" onClick={() => setStep(0)}>← Back</button>
-<button className="btn btn-blue" onClick={save} disabled={saving}>{saving?'Saving...':existing?'Save Changes':'Create Profile'}</button>
-</div>
-</div>
-)}
 </div>
 )
 }
