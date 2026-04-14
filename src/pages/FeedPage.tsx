@@ -15,6 +15,12 @@ const normalizeLogoImage = (value?: string | null): string | null => {
 }
 
 const logoInitials = (name?: string) => (name || '').split(' ').slice(0,2).map(w => w[0] || '').join('').toUpperCase() || 'BK'
+const cleanDisplayText = (value?: string | null): string => {
+  const v = (value || '').trim()
+  if (!v) return ''
+  // Remove accidental raw/base64 payloads leaking into UI labels.
+  return v.replace(/[A-Za-z0-9+/=]{40,}/g, '').trim()
+}
 
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const { myBiz, user, toast, setTab } = useApp()
@@ -207,21 +213,26 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
           {items.map(b => {
             const isSaved = saved.has(b.id)
             const isConn = conns.has(b.id)
+            const bizName = cleanDisplayText(b.name) || 'Business'
+            const bizIndustry = cleanDisplayText(b.industry) || 'Other'
+            const bizCity = cleanDisplayText(b.city)
+            const bizCountry = cleanDisplayText(b.country)
+            const bizTagline = cleanDisplayText(b.tagline)
             return (
               <div key={b.id} style={{ margin:'0 16px 11px', background:'#152236', borderRadius:16, padding:13, border:'1px solid rgba(255,255,255,0.07)' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:9 }}>
                   <div className={grad(b.id)} onClick={() => onView(b.id)} style={{ width:40, height:40, borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, cursor:'pointer', overflow:'hidden' }}>
                     {normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)
-                      ? <img src={(normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)) || ''} alt={b.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
-                      : logoInitials(b.name)}
+                      ? <img src={(normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)) || ''} alt={bizName} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+                      : logoInitials(bizName)}
                   </div>
                   <div style={{ flex:1, cursor:'pointer' }} onClick={() => onView(b.id)}>
-                    <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700 }}>{b.name}</div>
-                    <div style={{ fontSize:10.5, color:'#7A92B0', marginTop:2 }}>{b.industry} · {b.city}, {b.country}</div>
+                    <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700 }}>{bizName}</div>
+                    <div style={{ fontSize:10.5, color:'#7A92B0', marginTop:2 }}>{bizIndustry} · {bizCity}{bizCountry ? `, ${bizCountry}` : ''}</div>
                   </div>
                   {b.kyc_verified && <span className="badge badge-kyc">✅ KYC</span>}
                 </div>
-                <div style={{ fontSize:12.5, color:'#7A92B0', marginBottom:9, lineHeight:1.5 }}>{b.tagline}</div>
+                <div style={{ fontSize:12.5, color:'#7A92B0', marginBottom:9, lineHeight:1.5 }}>{bizTagline}</div>
                 {(b.products?.length || 0) > 0 && (
                   <div style={{ display:'flex', gap:7, overflowX:'auto', marginBottom:9 }}>
                     {b.products!.slice(0,3).map(p => (
