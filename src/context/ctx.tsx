@@ -17,7 +17,7 @@ type Ctx = {
   setChatWith: (id: string | null) => void
   unread: number
   setUnread: (n: number) => void
-  refreshBiz: () => Promise<void>
+  refreshBiz: () => Promise<Business | null>
   toast: (msg: string, type?: ToastType) => void
   toastMsg: string
   toastType: string
@@ -47,13 +47,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => setToastVisible(false), 2800)
   }, [])
 
-  const refreshBiz = useCallback(async () => {
-    if (!user) return
+  const refreshBiz = useCallback(async (): Promise<Business | null> => {
+    if (!user) return null
     try {
       const { data } = await sb.from('businesses').select('*,products(*)').eq('owner_id', user.id).single()
-      setMyBiz(data || null)
+      const nextBiz = data || null
+      setMyBiz(nextBiz)
+      return nextBiz
     } catch {
       setMyBiz(null)
+      return null
     }
   }, [user])
 

@@ -1,8 +1,12 @@
 /* ── RESET ─────────────────────────────────────── */
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+:root{
+  --safe-top:env(safe-area-inset-top,0px);
+  --safe-bottom:env(safe-area-inset-bottom,0px);
+}
 html{height:100%;height:100dvh;overflow:hidden;background:#060E1C;}
-body{height:100%;height:100dvh;font-family:'DM Sans',sans-serif;color:#fff;display:flex;align-items:center;justify-content:center;background:#060E1C;overflow:hidden;}
-#root{height:100%;height:100dvh;width:100%;display:flex;align-items:center;justify-content:center;}
+body{height:100%;height:100dvh;min-height:-webkit-fill-available;font-family:'DM Sans',sans-serif;color:#fff;display:flex;align-items:center;justify-content:center;background:#060E1C;overflow:hidden;}
+#root{height:100%;height:100dvh;min-height:-webkit-fill-available;width:100%;display:flex;align-items:center;justify-content:center;}
 input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance:none;appearance:none;}
 
 /* ── SHELL ─────────────────────────────────────── */
@@ -12,6 +16,7 @@ input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance
   min-width:320px;
   height:100%;
   height:100dvh;
+  min-height:-webkit-fill-available;
   display:flex;
   flex-direction:column;
   background:#0A1628;
@@ -26,21 +31,20 @@ input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance
 
 /* ── SCREEN ────────────────────────────────────── */
 .screen-area{flex:1;overflow:hidden;position:relative;min-height:0;}
-.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;background:#0A1628;animation:fi .2s ease both;}
+.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;background:#0A1628;animation:fi .2s ease both;padding-top:var(--safe-top);}
 .screen::-webkit-scrollbar{display:none;}
 @keyframes fi{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}
 
 /* ── BOTTOM NAV ────────────────────────────────── */
 .bnav{
   flex-shrink:0;
-  height:70px;
+  height:calc(64px + var(--safe-bottom));
   background:rgba(8,18,36,0.97);
   border-top:1px solid rgba(255,255,255,0.07);
   display:flex;
-  align-items:flex-start;
+  align-items:center;
   justify-content:space-around;
-  padding:8px 0 0;
-  padding-bottom:env(safe-area-inset-bottom,0px);
+  padding:6px 0 max(6px,var(--safe-bottom));
 }
 .bni{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;cursor:pointer;padding:2px;}
 .bni-ico{width:44px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;position:relative;transition:background .2s;}
@@ -101,6 +105,22 @@ input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance
 .field select option{background:#0F1F38;}
 .form-err{background:rgba(255,75,110,.1);border:1px solid rgba(255,75,110,.3);border-radius:10px;padding:10px 12px;margin-bottom:13px;font-size:13px;color:#FF4B6E;}
 
+/* iOS Safari autofill can render bright yellow blocks by default */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus{
+  -webkit-text-fill-color:#fff;
+  -webkit-box-shadow:0 0 0 1000px #152236 inset;
+  box-shadow:0 0 0 1000px #152236 inset;
+  transition:background-color 9999s ease-in-out 0s;
+}
+
 /* ── BADGES ────────────────────────────────────── */
 .badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:7px;font-size:10px;font-weight:700;}
 .badge-kyc{background:rgba(0,212,160,.15);color:#00D4A0;}
@@ -139,5 +159,5 @@ input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance
 
 /* ── ANDROID SAFE AREA ─────────────────────────── */
 @supports(padding-bottom:env(safe-area-inset-bottom)){
-  .bnav{padding-bottom:env(safe-area-inset-bottom);}
+  .bnav{padding-bottom:max(6px,env(safe-area-inset-bottom));}
 }

@@ -1,30 +1,53 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, EMOJIS, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage } from '../lib/db'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, EMOJIS, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 const GRADS = ['gr1','gr2','gr3','gr4','gr5','gr6','gr7','gr8']
+const normalizeLogoImage = (value?: string | null): string | null => {
+  if (!value) return null
+  let v = value.trim()
+  if (!v) return null
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1).trim()
+  if (!v) return null
+  if (v.startsWith('data:')) return v
+  if (v.startsWith('http://') || v.startsWith('https://') || v.startsWith('/')) return v
+  // Handle legacy raw base64 strings stored without a data URL prefix.
+  if (/^[A-Za-z0-9+/=]+$/.test(v) && v.length > 120) return `data:image/jpeg;base64,${v}`
+  return null
+}
+const logoText = (name?: string) => getLogo(name || '')
 
 // ── PROFILE PAGE ─────────────────────────────────────────────────
 export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:string|null; onBack?:()=>void; onChat?:(id:string)=>void; onTrust?:()=>void }) {
 const { user, myBiz, refreshBiz, toast } = useApp()
 const isOwn = !viewId || viewId === myBiz?.id
 const [biz, setBiz] = useState<Business|null>(null)
-const [tab, setTab] = useState<'products'|'posts'|'about'>('products')
+const [tab, setTab] = useState<'products'|'wall'|'about'>('products')
+type BizPost = {
+  id: string
+  business_id: string
+  content: string
+  media_url?: string | null
+  media_type?: 'image' | 'video' | null
+  likes?: number
+  created_at: string
+}
 
 
 
 const [editing, setEditing] = useState(false)
 const [isConn, setIsConn] = useState(false)
 const [loading, setLoading] = useState(true)
-const [bizPosts, setBizPosts] = useState<any[]>([])
+const [bizPosts, setBizPosts] = useState<BizPost[]>([])
 const [postContent, setPostContent] = useState('')
 const [postMedia, setPostMedia] = useState('')
-const [postMediaType, setPostMediaType] = useState('')
+const [postMediaType, setPostMediaType] = useState<'image'|'video'|''>('')
 const [posting, setPosting] = useState(false)
 const [postUploading, setPostUploading] = useState(false)
+const [postErr, setPostErr] = useState('')
 
 useEffect(() => {
-  if (!biz?.id || tab !== 'posts') return
+  if (!biz?.id || tab !== 'wall') return
   sb.from('posts').select('*').eq('business_id', biz.id).order('created_at', { ascending:false }).then(({ data }) => setBizPosts(data||[]))
 }, [biz?.id, tab])
 
@@ -32,7 +55,7 @@ useEffect(() => {
 if (isOwn) { setBiz(myBiz); setLoading(false); return }
 sb.from('businesses').select('*,products(*)').eq('id', viewId!).single().then(({ data }) => { setBiz(data); setLoading(false) })
 if (myBiz && viewId) sb.from('connections').select('id').eq('from_biz_id', myBiz.id).eq('to_biz_id', viewId).single().then(({ data }) => setIsConn(!!data))
-}, [viewId, myBiz?.id])
+}, [isOwn, viewId, myBiz])
 
 const doConnect = async () => {
 if (!myBiz || !biz) { toast('Create a profile first', 'info'); return }
@@ -44,24 +67,52 @@ toast('Connected with ' + biz.name + '!')
 }
 
 if (loading) return <div style={{ display:'flex', justifyContent:'center', padding:'60px 0' }}><div className="spinner" /></div>
-if (editing && isOwn) return <BizForm existing={biz||undefined} onSaved={async () => { setEditing(false); await refreshBiz(); setBiz(myBiz); toast(biz?'Profile updated!':'Profile created!') }} onCancel={() => setEditing(false)} />
-if (isOwn && !myBiz) return <BizForm onSaved={async () => { await refreshBiz(); toast('Profile created!') }} />
+if (editing && isOwn) return <BizForm existing={biz||undefined} onSaved={async () => {
+  setEditing(false)
+  const refreshed = await refreshBiz()
+  setBiz(refreshed)
+  toast(biz?'Profile updated!':'Profile created!')
+}} onCancel={() => setEditing(false)} />
+if (isOwn && !myBiz) return <BizForm onSaved={async () => {
+  const refreshed = await refreshBiz()
+  setBiz(refreshed)
+  toast('Profile created!')
+}} />
 if (!biz) return <div style={{ padding:'80px 20px', textAlign:'center', color:'#7A92B0' }}>Business not found</div>
+const logoRenderUrl = (() => {
+  const imageValue = normalizeLogoImage(biz.logo) || normalizeLogoImage(biz.logo_url)
+  if (!imageValue) return null
+  if (imageValue.startsWith('data:')) return imageValue
+  // Do not append cache-busting params to signed URLs; it can invalidate the signature.
+  const isSignedUrl = imageValue.includes('/object/sign/') || imageValue.includes('token=')
+  if (isSignedUrl) return imageValue
+  return `${imageValue}${imageValue.includes('?') ? '&' : '?'}v=${encodeURIComponent(biz.updated_at||'')}`
+})()
 
   const handlePostMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    if (file.size > 50 * 1024 * 1024) { toast('File must be under 50MB', 'error'); e.target.value = ''; return }
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) { toast('Only image or video files are allowed', 'error'); e.target.value = ''; return }
+    setPostErr('')
     setPostUploading(true)
     const folder = file.type.startsWith('video/') ? 'videos' : 'posts'
     const url = await uploadImage(file, folder)
     if (url) { setPostMedia(url); setPostMediaType(file.type.startsWith('video/') ? 'video' : 'image') }
+    else {
+      const msg = getLastUploadError() || 'Media upload failed'
+      setPostErr(msg)
+      toast(msg, 'error')
+    }
     setPostUploading(false)
+    e.target.value = ''
   }
 
   const submitPost = async () => {
     if (!postContent.trim()) { toast('Write something first', 'error'); return }
     if (!myBiz) { toast('Create a business profile first', 'info'); return }
     setPosting(true)
+    setPostErr('')
     const { error } = await sb.from('posts').insert({ business_id:myBiz.id, content:postContent.trim(), media_url:postMedia||null, media_type:postMediaType||null })
     if (error) { toast('Failed to post: ' + error.message, 'error'); setPosting(false); return }
     setPostContent(''); setPostMedia(''); setPostMediaType('')
@@ -83,10 +134,10 @@ return (
       </div>
       <div style={{ padding:'0 16px' }}>
 <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:12 }}>
-{biz.logo_url ? (
-<img src={biz.logo_url} alt={biz.name} style={{ width:68, height:68, borderRadius:17, objectFit:'cover' as const, border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }} />
+{logoRenderUrl ? (
+<img src={logoRenderUrl} alt={biz.name} style={{ width:68, height:68, borderRadius:17, objectFit:'cover' as const, border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }} />
 ) : (
-<div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }}>{biz.logo}</div>
+<div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{logoText(biz.name)}</div>
 )}
 {isOwn && <span style={{ fontSize:11, color:'#1E7EF7', fontWeight:700, cursor:'pointer', marginBottom:4 }} onClick={onTrust}>Trust Score →</span>}
 </div>
@@ -116,9 +167,9 @@ return (
 )}
 </div>
 <div style={{ display:'flex', borderBottom:'1px solid rgba(255,255,255,0.07)', margin:'0 0 14px' }}>
-{(['products','about'] as const).map(t => (
+{(['products','wall','about'] as const).map(t => (
 <div key={t} onClick={() => setTab(t)} style={{ flex:1, textAlign:'center', padding:'9px 4px', fontSize:12, fontWeight:600, cursor:'pointer', color:tab===t?'#1E7EF7':'#7A92B0', borderBottom:`2px solid ${tab===t?'#1E7EF7':'transparent'}` }}>
-{t === 'products' ? 'Products & Services' : 'About'}
+{t === 'products' ? 'Products & Services' : t === 'wall' ? 'Wall' : 'About'}
 </div>
 ))}
 </div>
@@ -143,11 +194,11 @@ return (
 </div>
 )}
 
-      {tab === 'posts' && (
+      {tab === 'wall' && (
         <div style={{ padding:'0 16px' }}>
           {isOwn && (
             <div style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.07)', marginBottom:14 }}>
-              <textarea placeholder="Share an update about your business..." value={postContent} onChange={e => setPostContent(e.target.value)} style={{ width:'100%', background:'none', border:'none', outline:'none', color:'#fff', fontSize:13, resize:'none', minHeight:70, fontFamily:'DM Sans, sans-serif' }} />
+              <textarea placeholder="Describe your product or service and add an image/video..." value={postContent} onChange={e => setPostContent(e.target.value)} style={{ width:'100%', background:'none', border:'none', outline:'none', color:'#fff', fontSize:13, resize:'none', minHeight:70, fontFamily:'DM Sans, sans-serif' }} />
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:8, borderTop:'1px solid rgba(255,255,255,0.07)', paddingTop:8 }}>
                 <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                   {postMedia && (postMediaType === 'video' ? <video src={postMedia} style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} /> : <img src={postMedia} alt="preview" style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} />)}
@@ -159,14 +210,15 @@ return (
                 </div>
                 <button onClick={submitPost} disabled={posting||!postContent.trim()} className="btn btn-blue btn-sm">{posting?'Posting...':'Post'}</button>
               </div>
+              {postErr && <div className="form-err" style={{ marginTop:8 }}>{postErr}</div>}
             </div>
           )}
-          {bizPosts.length === 0 && <div className="empty"><div className="ico">📝</div><h3>No posts yet</h3><p>{isOwn ? 'Share your first update!' : 'Nothing posted yet'}</p></div>}
-          {bizPosts.map((p:any) => (
+          {bizPosts.length === 0 && <div className="empty"><div className="ico">📝</div><h3>No wall posts yet</h3><p>{isOwn ? 'Share your first image/video post!' : 'No wall posts yet'}</p></div>}
+          {bizPosts.map((p) => (
             <div key={p.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.07)', marginBottom:10 }}>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
                 <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                  {biz?.logo_url ? <img src={biz.logo_url} alt={biz?.name} style={{ width:32, height:32, borderRadius:9, objectFit:'cover' as const }} /> : <div style={{ width:32, height:32, borderRadius:9, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color:'#fff' }}>{biz?.logo}</div>}
+                  {logoRenderUrl ? <img src={logoRenderUrl} alt={biz?.name} style={{ width:32, height:32, borderRadius:9, objectFit:'cover' as const }} /> : <div style={{ width:32, height:32, borderRadius:9, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, color:'#fff', overflow:'hidden' }}>{logoText(biz?.name)}</div>}
                   <div><div style={{ fontSize:12, fontWeight:700 }}>{biz?.name}</div><div style={{ fontSize:10, color:'#7A92B0' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' })}</div></div>
                 </div>
                 {isOwn && <button onClick={() => deletePost(p.id)} style={{ background:'none', border:'none', color:'#FF4B6E', fontSize:13, cursor:'pointer', fontWeight:700 }}>Delete</button>}
@@ -176,7 +228,7 @@ return (
               <div style={{ display:'flex', gap:8, marginTop:10, paddingTop:8, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
                 <button onClick={async () => {
                   await sb.from('post_likes').insert({ post_id:p.id, business_id:myBiz?.id })
-                  setBizPosts((prev:any[]) => prev.map((pp:any) => pp.id===p.id ? {...pp, likes:(pp.likes||0)+1} : pp))
+                  setBizPosts((prev) => prev.map((pp) => pp.id===p.id ? { ...pp, likes:(pp.likes||0)+1 } : pp))
                 }} style={{ flex:1, padding:'6px 0', background:'#0A1628', border:'1px solid rgba(255,255,255,0.07)', borderRadius:9, color:'#7A92B0', fontSize:12, fontWeight:600, cursor:'pointer' }}>Like {p.likes||0}</button>
                 <button onClick={async () => {
                   if (!myBiz || !biz) return
@@ -230,29 +282,94 @@ const [pImageUrl, setPImageUrl] = useState('')
 const [err, setErr] = useState('')
 const [saving, setSaving] = useState(false)
 const [uploading, setUploading] = useState(false)
-const [logoUrl, setLogoUrl] = useState(existing?.logo_url||'')
+const [logoUrl, setLogoUrl] = useState(normalizeLogoImage(existing?.logo) || '')
+const logoInputRef = useRef<HTMLInputElement | null>(null)
+const productMediaInputRef = useRef<HTMLInputElement | null>(null)
 const lgo = getLogo(name)
+
+const compressImageToDataUrl = (file: File, maxSide = 640, quality = 0.8): Promise<string> => new Promise((resolve, reject) => {
+  const objectUrl = URL.createObjectURL(file)
+  const img = new Image()
+  img.onload = () => {
+    try {
+      const ratio = Math.min(1, maxSide / Math.max(img.width, img.height))
+      const width = Math.max(1, Math.round(img.width * ratio))
+      const height = Math.max(1, Math.round(img.height * ratio))
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        URL.revokeObjectURL(objectUrl)
+        reject(new Error('Canvas unavailable'))
+        return
+      }
+      ctx.drawImage(img, 0, 0, width, height)
+      const outType = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
+      const dataUrl = canvas.toDataURL(outType, outType === 'image/jpeg' ? quality : undefined)
+      URL.revokeObjectURL(objectUrl)
+      resolve(dataUrl)
+    } catch (err) {
+      URL.revokeObjectURL(objectUrl)
+      reject(err instanceof Error ? err : new Error('Compression failed'))
+    }
+  }
+  img.onerror = () => {
+    URL.revokeObjectURL(objectUrl)
+    reject(new Error('Failed to load image'))
+  }
+  img.src = objectUrl
+})
 
 const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
 const file = e.target.files?.[0]
 if (!file) return
 if (file.size > 10 * 1024 * 1024) { setErr('File must be under 10MB'); return }
+if (!file.type.startsWith('image/')) { setErr('Logo must be an image file'); return }
+setErr('')
 setUploading(true)
-const url = await uploadImage(file, 'logos')
-if (url) { setLogoUrl(url); toast('Logo uploaded!') }
-else setErr('Upload failed - please try again')
+try {
+  // Compress before saving so profile updates stay lightweight and fast.
+  const dataUrl = await compressImageToDataUrl(file)
+  setLogoUrl(dataUrl)
+  // Persist logo immediately for existing profiles so the icon updates right away.
+  if (existing?.id) {
+    const { error: logoSaveErr } = await sb.from('businesses').update({ logo:dataUrl }).eq('id', existing.id)
+    if (logoSaveErr) {
+      const msg = 'Logo uploaded but failed to save profile: ' + logoSaveErr.message
+      setErr(msg)
+      toast(msg, 'error')
+      setUploading(false)
+      e.target.value = ''
+      return
+    }
+  }
+  toast('Photo updated!')
+} catch {
+  const msg = 'Upload failed - please try again'
+  setErr(msg)
+  toast(msg, 'error')
+}
 setUploading(false)
+e.target.value = ''
 }
 
 const handleProductMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
 const file = e.target.files?.[0]
 if (!file) return
 if (file.size > 50 * 1024 * 1024) { setErr('File must be under 50MB'); return }
+setErr('')
 setUploading(true)
 const folder = file.type.startsWith('video/') ? 'videos' : 'products'
 const url = await uploadImage(file, folder)
 if (url) { setPImageUrl(url); toast('Media uploaded!') }
+else {
+  const msg = getLastUploadError() || 'Upload failed - please try again'
+  setErr(msg)
+  toast(msg, 'error')
+}
 setUploading(false)
+e.target.value = ''
 }
 
 const validate = () => {
@@ -267,11 +384,13 @@ setErr(''); return true
 const save = async () => {
 if (!validate() || !user) return
 setSaving(true)
-const data = { owner_id:user.id, name:name.trim(), tagline:tagline.trim(), description:desc.trim(), industry:ind, type, city:city.trim(), country, website:website.trim(), founded:founded.trim(), logo:lgo, logo_url:logoUrl||null, grad:GRADS[0], trust_score:existing?.trust_score||45, trust_tier:existing?.trust_tier||'Bronze', kyc_verified:existing?.kyc_verified||false, certified:existing?.certified||false }
+const data = { owner_id:user.id, name:name.trim(), tagline:tagline.trim(), description:desc.trim(), industry:ind, type, city:city.trim(), country, website:website.trim(), founded:founded.trim(), logo:logoUrl||lgo, grad:GRADS[0], trust_score:existing?.trust_score||45, trust_tier:existing?.trust_tier||'Bronze', kyc_verified:existing?.kyc_verified||false, certified:existing?.certified||false }
 if (existing) {
-await sb.from('businesses').update(data).eq('id', existing.id)
+const { error } = await sb.from('businesses').update(data).eq('id', existing.id)
+if (error) { setSaving(false); setErr(error.message); toast('Failed to save profile', 'error'); return }
 } else {
-const { data:biz } = await sb.from('businesses').insert(data).select().single()
+const { data:biz, error } = await sb.from('businesses').insert(data).select().single()
+if (error) { setSaving(false); setErr(error.message); toast('Failed to create profile', 'error'); return }
 if (biz && products.length) await sb.from('products').insert(products.map(p => ({ ...p, business_id:biz.id })))
 }
 setSaving(false); onSaved()
@@ -313,9 +432,12 @@ return (
 <label htmlFor="logo-upload" style={{ position:'absolute', bottom:-6, right:-6, width:30, height:30, borderRadius:'50%', background:'#1E7EF7', display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, cursor:'pointer', border:'2px solid #0A1628' }}>
 {uploading ? '⏳' : '📷'}
 </label>
-<input id="logo-upload" type="file" accept="image/*,video/*" onChange={handleLogoUpload} style={{ display:'none' }} />
+<input ref={logoInputRef} id="logo-upload" type="file" accept="image/*" onChange={handleLogoUpload} style={{ position:'absolute', left:'-9999px', width:1, height:1, opacity:0 }} />
 </div>
-<div style={{ fontSize:10, color:'#7A92B0', marginTop:10 }}>Tap 📷 to upload logo or photo</div>
+<div style={{ marginTop:10, display:'flex', justifyContent:'center' }}>
+<button type="button" className="btn btn-ghost btn-sm" style={{ cursor:'pointer' }} onClick={() => logoInputRef.current?.click()}>{uploading ? 'Uploading...' : 'Upload Logo / Photo'}</button>
+</div>
+<div style={{ fontSize:10, color:'#7A92B0', marginTop:8 }}>PNG, JPG, WEBP or MP4</div>
 </div>
 <div className="field"><label>Business Name *</label><input placeholder="e.g. NexaTech Solutions" value={name} onChange={e => setName(e.target.value)} /></div>
 <div className="field"><label>Tagline</label><input placeholder="Short tagline" value={tagline} onChange={e => setTagline(e.target.value)} /></div>
@@ -333,6 +455,11 @@ return (
 <div className="field"><label>Founded</label><input placeholder="2020" value={founded} onChange={e => setFounded(e.target.value)} /></div>
 </div>
 {err && <div className="form-err">{err}</div>}
+<div style={{ height:92 }} />
+</div>
+)}
+{step === 0 && (
+<div style={{ position:'sticky', bottom:0, zIndex:20, padding:'10px 16px calc(10px + env(safe-area-inset-bottom,0px))', background:'linear-gradient(to top, rgba(10,22,40,0.98) 70%, rgba(10,22,40,0))' }}>
 <button className="btn btn-blue btn-full" onClick={() => validate() && setStep(1)}>Next: Add Products →</button>
 <button className="btn btn-ghost btn-full" style={{ marginTop:8 }} onClick={save} disabled={saving}>{saving?'Saving...':'Save & Skip Products'}</button>
 </div>
@@ -364,15 +491,20 @@ pImageUrl.includes('/videos/') ?
 <video src={pImageUrl} style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} /> :
 <img src={pImageUrl} alt="preview" style={{ width:40, height:40, borderRadius:8, objectFit:'cover' as const }} />
 )}
-<label style={{ padding:'8px 14px', borderRadius:9, background:'#152236', border:'1px solid rgba(255,255,255,0.07)', fontSize:11.5, color:'#7A92B0', cursor:'pointer', fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
+<label htmlFor="product-media-upload" style={{ padding:'8px 14px', borderRadius:9, background:'#152236', border:'1px solid rgba(255,255,255,0.07)', fontSize:11.5, color:'#7A92B0', cursor:'pointer', fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
 {uploading ? '⏳ Uploading...' : '📷 Upload Photo / Video'}
-<input type="file" accept="image/*,video/*" onChange={handleProductMediaUpload} style={{ display:'none' }} />
 </label>
+<input ref={productMediaInputRef} id="product-media-upload" type="file" accept="image/*,video/*" onChange={handleProductMediaUpload} style={{ position:'absolute', left:'-9999px', width:1, height:1, opacity:0 }} />
 {pImageUrl && <button onClick={() => setPImageUrl('')} style={{ background:'none', border:'none', color:'#FF4B6E', fontSize:18, cursor:'pointer' }}>×</button>}
 </div>
 </div>
 <button className="btn btn-accent btn-full btn-sm" onClick={addProd}>+ Add Product / Service</button>
 </div>
+<div style={{ height:82 }} />
+</div>
+)}
+{step === 1 && (
+<div style={{ position:'sticky', bottom:0, zIndex:20, padding:'10px 16px calc(10px + env(safe-area-inset-bottom,0px))', background:'linear-gradient(to top, rgba(10,22,40,0.98) 70%, rgba(10,22,40,0))' }}>
 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:9 }}>
 <button className="btn btn-ghost" onClick={() => setStep(0)}>← Back</button>
 <button className="btn btn-blue" onClick={save} disabled={saving}>{saving?'Saving...':existing?'Save Changes':'Create Profile'}</button>
@@ -601,7 +733,7 @@ return (
 <div style={{ margin:'0 16px 14px', background:'#1A2D47', borderRadius:20, padding:'18px 15px', border:'1px solid rgba(255,255,255,0.07)', transition:'opacity .2s', opacity:fading?0:1 }}>
 <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:15 }}>
 <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:5, flex:1 }}>
-<div style={{ width:62, height:62, borderRadius:'50%', background:'rgba(30,126,247,0.2)', border:'2.5px solid #1E7EF7', display:'flex', alignItems:'center', justifyContent:'center', fontSize:25 }}>{myBiz?myBiz.logo[0]:'👤'}</div>
+<div style={{ width:62, height:62, borderRadius:'50%', background:'rgba(30,126,247,0.2)', border:'2.5px solid #1E7EF7', display:'flex', alignItems:'center', justifyContent:'center', fontSize:25 }}>{myBiz?logoText(myBiz.name).slice(0,1):'👤'}</div>
 <div style={{ fontFamily:'Syne, sans-serif', fontSize:11, fontWeight:700, textAlign:'center' }}>You</div>
 <div style={{ fontSize:10, color:'#7A92B0', textAlign:'center' }}>{myBiz?.name||'Your Business'}</div>
 </div>
@@ -711,7 +843,7 @@ return (
 <div className="topbar"><div className="page-title">Trust & Verification</div></div>
 <div style={{ margin:'0 16px 15px', borderRadius:18, padding:18, background:'linear-gradient(135deg,#0C2340,#1A3D6E)', position:'relative', overflow:'hidden' }}>
 <div style={{ display:'flex', alignItems:'center', gap:13, position:'relative', zIndex:1 }}>
-<div style={{ width:50, height:50, borderRadius:13, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:17, color:'#fff', flexShrink:0 }}>{myBiz.logo}</div>
+<div style={{ width:50, height:50, borderRadius:13, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:17, color:'#fff', flexShrink:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{logoText(myBiz.name)}</div>
 <div style={{ flex:1 }}>
 <div style={{ fontFamily:'Syne, sans-serif', fontSize:42, fontWeight:800, color:'#1E7EF7', lineHeight:1 }}>{myBiz.trust_score}</div>
 <div style={{ fontSize:11, color:'rgba(255,255,255,0.5)', marginTop:1 }}>Your Trust Score</div>

@@ -5,21 +5,46 @@ const SUPABASE_URL = 'https://ganberetmowmaidioryu.supabase.co'
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhbmJlcmV0bW93bWFpZGlvcnl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTg5MzksImV4cCI6MjA4OTQ3NDkzOX0.5-mD0cFberNXOmSh8F0lItV6wbTJE0zHjCiPFAYfExE'
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY)
+let lastUploadError = ''
+
+export function getLastUploadError() {
+  return lastUploadError
+}
 
 export async function uploadImage(file: File, folder: string): Promise<string | null> {
-  const ext = file.name.split('.').pop()
-  const filename = folder + '/' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.' + ext
-  const { error } = await sb.storage.from('bizzkit-images').upload(filename, file, { cacheControl: '3600', upsert: true })
-  if (error) { console.error('Upload error:', error); return null }
-  const { data } = sb.storage.from('bizzkit-images').getPublicUrl(filename)
-  return data.publicUrl
+  lastUploadError = ''
+  const { data: authData } = await sb.auth.getUser()
+  const userId = authData.user?.id
+  const extFromName = file.name.includes('.') ? file.name.split('.').pop() : ''
+  const extFromMime = file.type?.split('/')?.[1] || 'jpg'
+  const ext = (extFromName || extFromMime || 'jpg').toLowerCase()
+  const safeFolder = folder.replace(/[^a-zA-Z0-9/_-]/g, '') || 'uploads'
+  const keyPrefix = userId ? (userId + '/') : ''
+  const filename = keyPrefix + safeFolder + '/' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.' + ext
+  const { error } = await sb.storage.from('bizzkit-images').upload(filename, file, {
+    cacheControl: '3600',
+    contentType: file.type || undefined,
+    upsert: false
+  })
+  if (error) {
+    lastUploadError = error.message || 'Storage upload failed'
+    console.error('Upload error:', error)
+    return null
+  }
+  const { data: pub } = sb.storage.from('bizzkit-images').getPublicUrl(filename)
+  const publicUrl = pub.publicUrl
+
+  // Works for both public and private buckets.
+  const { data: signed, error: signedErr } = await sb.storage.from('bizzkit-images').createSignedUrl(filename, 60 * 60 * 24 * 30)
+  if (!signedErr && signed?.signedUrl) return signed.signedUrl
+  return publicUrl
 }
 
 export type Business = {
   id: string; owner_id: string; name: string; tagline: string
   description: string; industry: string; type: string
   city: string; country: string; website: string
-  founded: string; logo: string; grad: string
+  founded: string; logo: string; logo_url?: string; grad: string
   kyc_verified: boolean; certified: boolean
   trust_score: number; trust_tier: string; followers: number
   created_at: string; updated_at: string
