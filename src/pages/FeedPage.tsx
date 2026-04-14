@@ -31,6 +31,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [conns, setConns] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
+  const [connsReady, setConnsReady] = useState(false)
   const [notifCount, setNotifCount] = useState(0)
 
   useEffect(() => {
@@ -38,8 +39,11 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       .then(({ data }) => { setList((data || []).filter(b => b.id !== myBiz?.id)); setLoading(false) })
     if (user) sb.from('saved_businesses').select('business_id').eq('user_id', user.id)
       .then(({ data }) => setSaved(new Set((data || []).map((s: any) => s.business_id))))
-    if (myBiz) sb.from('connections').select('to_biz_id').eq('from_biz_id', myBiz.id)
+    if (!myBiz) { setConns(new Set()); setConnsReady(true); return }
+    setConnsReady(false)
+    sb.from('connections').select('to_biz_id').eq('from_biz_id', myBiz.id)
       .then(({ data }) => setConns(new Set((data || []).map((c: any) => c.to_biz_id))))
+      .finally(() => setConnsReady(true))
   }, [myBiz?.id, user?.id])
 
   useEffect(() => {
@@ -165,7 +169,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         ))}
       </div>
 
-      {loading ? (
+      {loading || !connsReady ? (
         <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>
       ) : (
         <>
