@@ -2,6 +2,20 @@ import React, { useState, useEffect } from 'react'
 import { sb, Business, INDUSTRIES, grad } from '../lib/db'
 import { useApp } from '../context/ctx'
 
+const normalizeLogoImage = (value?: string | null): string | null => {
+  if (!value) return null
+  let v = value.trim()
+  if (!v) return null
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1).trim()
+  if (!v) return null
+  if (v.startsWith('data:')) return v
+  if (v.startsWith('http://') || v.startsWith('https://') || v.startsWith('/')) return v
+  if (/^[A-Za-z0-9+/=]+$/.test(v) && v.length > 120) return `data:image/jpeg;base64,${v}`
+  return null
+}
+
+const logoInitials = (name?: string) => (name || '').split(' ').slice(0,2).map(w => w[0] || '').join('').toUpperCase() || 'BK'
+
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const { myBiz, user, toast, setTab } = useApp()
   const [list, setList] = useState<Business[]>([])
@@ -156,7 +170,11 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                 {trending.map(b => (
                   <div key={b.id} onClick={() => onView(b.id)} style={{ width:158, flexShrink:0, background:'#152236', borderRadius:16, overflow:'hidden', cursor:'pointer', border:'1px solid rgba(255,255,255,0.07)' }}>
                     <div className={grad(b.id)} style={{ height:74, display:'flex', alignItems:'flex-end', padding:'0 9px 8px' }}>
-                      <div style={{ width:36, height:36, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:13, color:'#fff', background:'rgba(0,0,0,0.3)', border:'2px solid rgba(255,255,255,0.2)' }}>{b.logo}</div>
+                      <div style={{ width:36, height:36, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:13, color:'#fff', background:'rgba(0,0,0,0.3)', border:'2px solid rgba(255,255,255,0.2)', overflow:'hidden' }}>
+                        {normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)
+                          ? <img src={(normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)) || ''} alt={b.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+                          : logoInitials(b.name)}
+                      </div>
                     </div>
                     <div style={{ padding:'9px 10px 11px' }}>
                       <div style={{ fontFamily:'Syne, sans-serif', fontSize:12.5, fontWeight:700, lineHeight:1.2 }}>{b.name}</div>
@@ -192,7 +210,11 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
             return (
               <div key={b.id} style={{ margin:'0 16px 11px', background:'#152236', borderRadius:16, padding:13, border:'1px solid rgba(255,255,255,0.07)' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:9 }}>
-                  <div className={grad(b.id)} onClick={() => onView(b.id)} style={{ width:40, height:40, borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, cursor:'pointer' }}>{b.logo}</div>
+                  <div className={grad(b.id)} onClick={() => onView(b.id)} style={{ width:40, height:40, borderRadius:12, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, cursor:'pointer', overflow:'hidden' }}>
+                    {normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)
+                      ? <img src={(normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)) || ''} alt={b.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+                      : logoInitials(b.name)}
+                  </div>
                   <div style={{ flex:1, cursor:'pointer' }} onClick={() => onView(b.id)}>
                     <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700 }}>{b.name}</div>
                     <div style={{ fontSize:10.5, color:'#7A92B0', marginTop:2 }}>{b.industry} · {b.city}, {b.country}</div>
