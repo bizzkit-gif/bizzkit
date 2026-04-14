@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React from 'react'
 import { useApp } from './context/ctx'
 import AuthPage from './pages/AuthPage'
 import FeedPage from './pages/FeedPage'
@@ -15,14 +15,6 @@ const NAV = [
 
 export default function App() {
   const { user, loading, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible } = useApp()
-  const [time, setTime] = useState('9:41')
-
-  useEffect(() => {
-    const tick = () => { const n = new Date(); setTime(n.getHours()+':'+String(n.getMinutes()).padStart(2,'0')) }
-    tick()
-    const t = setInterval(tick, 30000)
-    return () => clearInterval(t)
-  }, [])
 
   const go = (t: string) => { setPrevTab(tab); setTab(t); if(t!=='profile') setViewId(null) }
   const viewBiz = (id: string) => { setViewId(id); setPrevTab(tab); setTab('profile') }
@@ -50,10 +42,6 @@ export default function App() {
 
   return (
     <div className="shell">
-      <div className="sbar" style={{ display:"none" }}>
-        <div className="sbar-t">{time}</div>
-        <div className="sbar-r"><span>WiFi</span><span>100%</span></div>
-      </div>
       <div className="screen-area">
         <div className="screen" key={tab+(viewId||'')}>{screen()}</div>
       </div>
