@@ -43,16 +43,26 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         ownBizId = ownBiz?.id || null
       }
 
-      const [{ data: businesses }, { data: savedRows }, connsRes] = await Promise.all([
+      const [{ data: businesses }, { data: savedRows }, connsRes, chatsRes] = await Promise.all([
         sb.from('businesses').select('*,products(*)').order('trust_score', { ascending: false }),
         user?.id ? sb.from('saved_businesses').select('business_id').eq('user_id', user.id) : Promise.resolve({ data: [] as any[] }),
-        ownBizId ? sb.from('connections').select('to_biz_id').eq('from_biz_id', ownBizId) : Promise.resolve({ data: [] as any[] })
+        ownBizId ? sb.from('connections').select('from_biz_id,to_biz_id').or(`from_biz_id.eq.${ownBizId},to_biz_id.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] }),
+        ownBizId ? sb.from('chats').select('participant_a,participant_b').or(`participant_a.eq.${ownBizId},participant_b.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] })
       ])
 
       if (!active) return
       setList((businesses || []).filter(b => b.id !== ownBizId))
       setSaved(new Set((savedRows || []).map((s: any) => s.business_id)))
-      setConns(new Set(((connsRes.data as any[]) || []).map((c: any) => c.to_biz_id)))
+      const connIds = new Set<string>()
+      ;((connsRes.data as any[]) || []).forEach((c: any) => {
+        const otherId = c.from_biz_id === ownBizId ? c.to_biz_id : c.from_biz_id
+        if (otherId && otherId !== ownBizId) connIds.add(otherId)
+      })
+      ;((chatsRes.data as any[]) || []).forEach((c: any) => {
+        const otherId = c.participant_a === ownBizId ? c.participant_b : c.participant_a
+        if (otherId && otherId !== ownBizId) connIds.add(otherId)
+      })
+      setConns(connIds)
       setLoading(false)
     }
 
