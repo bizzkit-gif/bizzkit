@@ -1355,7 +1355,12 @@ return (
 }
 
 function RandomCallRoom({ myBiz, other, onEnd }: { myBiz: Business; other: Business; onEnd: () => void }) {
-  const room = `random-${[myBiz.id, other.id].sort().join('-').replace(/-/g, '').slice(0, 36)}`
+  /** Full sorted pair id (no truncation) — slice(0,36) could collide and mix signaling between different pairs. */
+  const pairId = [myBiz.id, other.id]
+    .sort()
+    .map((id) => id.replace(/-/g, ''))
+    .join('')
+  const room = `random-${pairId}`
   return (
     <PeerVideoCall
       myBiz={myBiz}

@@ -2,11 +2,31 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { sb, Business } from '../lib/db'
 
 type LiveSignal = {
-  type: 'ready' | 'offer' | 'answer' | 'ice'
+  type: 'ready' | 'offer' | 'answer' | 'ice' | 'hangup'
   from: string
   to?: string
   bizName?: string
   payload?: unknown
+}
+
+/** STUN + public TURN (helps symmetric NAT / mobile carriers). Optional Vite env can override TURN. */
+function buildIceServers(): RTCIceServer[] {
+  const servers: RTCIceServer[] = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    // Open Relay (Metered) — shared dev relay; improves connectivity when STUN-only fails
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  ]
+  const turnUrl = import.meta.env.VITE_WEBRTC_TURN_URL as string | undefined
+  const turnUser = import.meta.env.VITE_WEBRTC_TURN_USER as string | undefined
+  const turnCred = import.meta.env.VITE_WEBRTC_TURN_CREDENTIAL as string | undefined
+  if (turnUrl?.trim() && turnUser !== undefined && turnCred !== undefined) {
+    servers.push({ urls: turnUrl.trim(), username: turnUser, credential: turnCred })
+  }
+  return servers
 }
 
 export type PeerVideoCallProps = {
@@ -41,6 +61,7 @@ export function PeerVideoCall({
   const [micOn, setMicOn] = useState(true)
   const [camOn, setCamOn] = useState(true)
   const [starting, setStarting] = useState(true)
+  const [mediaError, setMediaError] = useState<string | null>(null)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
@@ -53,6 +74,7 @@ export function PeerVideoCall({
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([])
   const offerSentRef = useRef(false)
   const readyIntervalRef = useRef<number | null>(null)
+  const hangupHandledRef = useRef(false)
 
   const sub = subtitleLine ?? `${other.industry} · ${other.city}`
   const hint = connectingHint ?? `Connecting… waiting for ${other.name}.`
@@ -78,10 +100,8 @@ export function PeerVideoCall({
   const createPeer = useCallback(() => {
     if (peerRef.current) return peerRef.current
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-      ],
+      iceServers: buildIceServers(),
+      iceCandidatePoolSize: 10,
     })
     const local = localStreamRef.current
     if (local) local.getTracks().forEach((track) => pc.addTrack(track, local))
@@ -119,11 +139,45 @@ export function PeerVideoCall({
     }
   }, [])
 
+  const handleEnd = useCallback(
+    async (fromRemote?: boolean) => {
+      if (hangupHandledRef.current) return
+      hangupHandledRef.current = true
+      stopReadyPing()
+      if (!fromRemote) {
+        sendSignal({ type: 'hangup', from: peerIdRef.current, bizName: myBiz.name })
+      }
+      if (
+        !remoteConnectedRef.current &&
+        !fromRemote &&
+        onEndWithoutRemote &&
+        localStreamRef.current != null
+      ) {
+        await onEndWithoutRemote()
+      }
+      onEnd()
+    },
+    [onEnd, onEndWithoutRemote, sendSignal, stopReadyPing, myBiz.name]
+  )
+
   useEffect(() => {
     let mounted = true
     const setup = async () => {
       try {
-        const local = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: 'user' } })
+        setMediaError(null)
+        let local: MediaStream
+        try {
+          local = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: { facingMode: 'user' },
+          })
+        } catch {
+          try {
+            local = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+          } catch {
+            local = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          }
+        }
         if (!mounted) {
           local.getTracks().forEach((t) => t.stop())
           return
@@ -136,6 +190,11 @@ export function PeerVideoCall({
           .on('broadcast', { event: 'signal' }, async ({ payload }: { payload: LiveSignal }) => {
             const msg = payload
             if (!msg || msg.from === peerIdRef.current) return
+
+            if (msg.type === 'hangup') {
+              void handleEnd(true)
+              return
+            }
 
             if (msg.type === 'ready') {
               if (!iAmOfferer || offerSentRef.current) return
@@ -204,7 +263,10 @@ export function PeerVideoCall({
           })
         channelRef.current = ch
       } catch {
-        setStarting(false)
+        if (mounted) {
+          setMediaError('Camera or microphone access was blocked or unavailable. Allow access in your browser settings and try again.')
+          setStarting(false)
+        }
       }
     }
     void setup()
@@ -223,7 +285,7 @@ export function PeerVideoCall({
       pendingIceRef.current = []
       offerSentRef.current = false
     }
-  }, [createPeer, flushPendingIce, iAmOfferer, myBiz.name, signalingChannelId, sendSignal, stopReadyPing])
+  }, [createPeer, flushPendingIce, handleEnd, iAmOfferer, myBiz.name, signalingChannelId, sendSignal, stopReadyPing])
 
   /** Attach local stream after ref is mounted (fixes blank self-view on some mobile WebKit builds). */
   useEffect(() => {
@@ -250,13 +312,6 @@ export function PeerVideoCall({
   useEffect(() => {
     if (remoteStream) remoteConnectedRef.current = true
   }, [remoteStream])
-
-  const handleEnd = async () => {
-    if (!remoteConnectedRef.current && onEndWithoutRemote) {
-      await onEndWithoutRemote()
-    }
-    onEnd()
-  }
 
   const toggleMic = () => {
     const local = localStreamRef.current
@@ -289,7 +344,12 @@ export function PeerVideoCall({
         </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '6px 10px', gap: 6, overflow: 'hidden' }}>
-        {starting && (
+        {mediaError && (
+          <div style={{ fontSize: 11, color: '#FF8A7A', flexShrink: 0, lineHeight: 1.4, padding: '6px 8px', background: 'rgba(255,80,80,0.08)', borderRadius: 8 }}>
+            {mediaError}
+          </div>
+        )}
+        {starting && !mediaError && (
           <div style={{ fontSize: 10.5, color: '#7A92B0', flexShrink: 0, lineHeight: 1.35 }}>{hint}</div>
         )}
         <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateRows: '1fr 1fr', gap: 7 }}>
