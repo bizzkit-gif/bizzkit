@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, RANDOM_CALL_INVITE_MARKER } from '../lib/db'
+import { sb, Business, RANDOM_CALL_INVITE_MARKER, CHAT_CALL_INVITE_MARKER } from '../lib/db'
 
 type ToastType = 'success' | 'error' | 'info'
 
@@ -24,6 +24,8 @@ type Ctx = {
   toastVisible: boolean
   pendingRandomCallFromBusinessId: string | null
   clearPendingRandomCall: () => void
+  pendingChatCallFromBusinessId: string | null
+  clearPendingChatCall: () => void
 }
 
 const AppCtx = createContext<Ctx>({} as Ctx)
@@ -42,12 +44,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [toastType, setToastType] = useState('success')
   const [toastVisible, setToastVisible] = useState(false)
   const [pendingRandomCallFromBusinessId, setPendingRandomCallFromBusinessId] = useState<string | null>(null)
+  const [pendingChatCallFromBusinessId, setPendingChatCallFromBusinessId] = useState<string | null>(null)
   const unreadRef = useRef(0)
   const toastHideRef = useRef<number | null>(null)
   const lastRandomInviteMsgIdRef = useRef<string | null>(null)
+  const lastChatInviteMsgIdRef = useRef<string | null>(null)
 
   const clearPendingRandomCall = useCallback(() => {
     setPendingRandomCallFromBusinessId(null)
+  }, [])
+
+  const clearPendingChatCall = useCallback(() => {
+    setPendingChatCallFromBusinessId(null)
   }, [])
 
   const toast = useCallback((msg: string, type: ToastType = 'success', durationMs = 2800) => {
@@ -65,6 +73,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   type RandomInviteRow = { id?: string; sender_id?: string; text?: string | null }
+
+  const handleChatInviteRow = useCallback((row: RandomInviteRow) => {
+    if (!myBiz?.id) return
+    if (!row?.sender_id || row.sender_id === myBiz.id) return
+    const text = row.text || ''
+    if (!text.includes(CHAT_CALL_INVITE_MARKER)) return
+    if (!text.includes('is calling you')) return
+    if (row.id && lastChatInviteMsgIdRef.current === row.id) return
+    if (row.id) lastChatInviteMsgIdRef.current = row.id
+    setPendingChatCallFromBusinessId(row.sender_id)
+    setChatWith(row.sender_id)
+    if (navigator.vibrate) navigator.vibrate([220, 120, 220, 120, 220, 120, 220])
+    toast('📞 Incoming Chat call — opening Chat to answer', 'info', 5200)
+    setTab('messages')
+  }, [myBiz?.id, toast, setTab, setChatWith])
 
   const handleRandomInviteRow = useCallback((row: RandomInviteRow) => {
     if (!myBiz?.id) return
@@ -141,6 +164,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const isMine = chat.participant_a === myBiz.id || chat.participant_b === myBiz.id
       if (!isMine) return
 
+      if (row.text?.includes(CHAT_CALL_INVITE_MARKER) && row.text.includes('is calling you')) {
+        handleChatInviteRow(row)
+        await refreshUnread()
+        return
+      }
+
       if (row.text?.includes(RANDOM_CALL_INVITE_MARKER)) {
         handleRandomInviteRow(row)
         await refreshUnread()
@@ -165,18 +194,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       active = false
       sb.removeChannel(ch)
     }
-  }, [myBiz?.id, tab, toast, handleRandomInviteRow])
+  }, [myBiz?.id, tab, toast, handleRandomInviteRow, handleChatInviteRow])
 
-  // Poll for Random call invites when Realtime is delayed or the app was in background (mobile Safari).
+  // Poll for Chat + Random call invites when Realtime is delayed or the app was in background (mobile Safari).
   useEffect(() => {
     if (!myBiz?.id) return
 
-    const pollRecentInvite = async () => {
+    const pollRecentInvites = async () => {
       const sinceIso = new Date(Date.now() - 120_000).toISOString()
       const { data: chats } = await sb.from('chats').select('id').or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
       const chatIds = (chats || []).map((c: { id: string }) => c.id)
       if (!chatIds.length) return
-      const { data: recent } = await sb
+
+      const { data: chatRows } = await sb
+        .from('messages')
+        .select('id,sender_id,text,created_at')
+        .in('chat_id', chatIds)
+        .neq('sender_id', myBiz.id)
+        .gte('created_at', sinceIso)
+        .ilike('text', `%${CHAT_CALL_INVITE_MARKER}%`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+      const chatLatest = chatRows?.[0] as { id?: string; sender_id?: string; text?: string } | undefined
+      if (chatLatest?.sender_id && chatLatest.text?.includes('is calling you')) {
+        handleChatInviteRow(chatLatest)
+      }
+
+      const { data: randRows } = await sb
         .from('messages')
         .select('id,sender_id,text,created_at')
         .in('chat_id', chatIds)
@@ -185,13 +229,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         .ilike('text', `%${RANDOM_CALL_INVITE_MARKER}%`)
         .order('created_at', { ascending: false })
         .limit(1)
-      const latest = recent?.[0] as { id?: string; sender_id?: string; text?: string } | undefined
-      if (!latest?.sender_id || !latest.text?.includes(RANDOM_CALL_INVITE_MARKER)) return
-      if (!latest.text?.includes('is calling you')) return
-      handleRandomInviteRow(latest)
+      const randLatest = randRows?.[0] as { id?: string; sender_id?: string; text?: string } | undefined
+      if (randLatest?.sender_id && randLatest.text?.includes('is calling you')) {
+        handleRandomInviteRow(randLatest)
+      }
     }
 
-    const wrappedPoll = () => { void pollRecentInvite() }
+    const wrappedPoll = () => { void pollRecentInvites() }
     const interval = window.setInterval(wrappedPoll, 12_000)
     const onVis = () => {
       if (document.visibilityState === 'visible') wrappedPoll()
@@ -202,7 +246,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       window.clearInterval(interval)
       document.removeEventListener('visibilitychange', onVis)
     }
-  }, [myBiz?.id, handleRandomInviteRow])
+  }, [myBiz?.id, handleRandomInviteRow, handleChatInviteRow])
 
   return (
     <AppCtx.Provider value={{
@@ -213,7 +257,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       unread, setUnread,
       refreshBiz,
       toast, toastMsg, toastType, toastVisible,
-      pendingRandomCallFromBusinessId, clearPendingRandomCall
+      pendingRandomCallFromBusinessId, clearPendingRandomCall,
+      pendingChatCallFromBusinessId, clearPendingChatCall
     }}>
       {children}
     </AppCtx.Provider>

@@ -9,6 +9,9 @@ export const sb = createClient(SUPABASE_URL, SUPABASE_KEY)
 /** Prefix in chat messages used to signal an incoming Random video call invite. */
 export const RANDOM_CALL_INVITE_MARKER = '[RANDOM_CALL_INVITE]'
 
+/** Prefix for 1:1 Chat video call invites (same detection pattern as Random). */
+export const CHAT_CALL_INVITE_MARKER = '[CHAT_CALL_INVITE]'
+
 export function randomCallInviteMessageRinging(callerName: string): string {
   return `${RANDOM_CALL_INVITE_MARKER} ${callerName} is calling you in Random.`
 }
@@ -17,12 +20,26 @@ export function randomCallInviteMessageMissed(callerName: string): string {
   return `${RANDOM_CALL_INVITE_MARKER} Missed call from ${callerName}`
 }
 
+export function chatCallInviteMessageRinging(callerName: string): string {
+  return `${CHAT_CALL_INVITE_MARKER} ${callerName} is calling you in Chat.`
+}
+
+export function chatCallInviteMessageMissed(callerName: string): string {
+  return `${CHAT_CALL_INVITE_MARKER} Missed call from ${callerName}`
+}
+
 /** Hide internal marker in chat UI; stored text still includes it for detection. */
 export function displayChatMessageText(text: string | null | undefined): string {
   const t = (text || '').trim()
-  if (!t.startsWith(RANDOM_CALL_INVITE_MARKER)) return t
-  const rest = t.slice(RANDOM_CALL_INVITE_MARKER.length).trim()
-  return rest || t
+  if (t.startsWith(CHAT_CALL_INVITE_MARKER)) {
+    const rest = t.slice(CHAT_CALL_INVITE_MARKER.length).trim()
+    return rest || t
+  }
+  if (t.startsWith(RANDOM_CALL_INVITE_MARKER)) {
+    const rest = t.slice(RANDOM_CALL_INVITE_MARKER.length).trim()
+    return rest || t
+  }
+  return t
 }
 
 /** After decline or end without connecting, rewrite the latest invite line to "Missed call from …". */
@@ -42,6 +59,25 @@ export async function markLatestRandomCallInviteAsMissed(bizA: string, bizB: str
   const { data: caller } = await sb.from('businesses').select('name').eq('id', row.sender_id).single()
   const name = (caller?.name || 'Someone').trim() || 'Someone'
   await sb.from('messages').update({ text: randomCallInviteMessageMissed(name) }).eq('id', row.id)
+}
+
+/** Rewrite latest ringing Chat call invite to missed (caller ended before connect). */
+export async function markLatestChatCallInviteAsMissed(bizA: string, bizB: string): Promise<void> {
+  const { data: chatId } = await sb.rpc('get_or_create_chat', { biz_a: bizA, biz_b: bizB })
+  if (!chatId) return
+  const { data: rows } = await sb
+    .from('messages')
+    .select('id,sender_id,text')
+    .eq('chat_id', chatId)
+    .ilike('text', `%${CHAT_CALL_INVITE_MARKER}%`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  const row = rows?.[0]
+  if (!row?.text) return
+  if (!row.text.includes('is calling you')) return
+  const { data: caller } = await sb.from('businesses').select('name').eq('id', row.sender_id).single()
+  const name = (caller?.name || 'Someone').trim() || 'Someone'
+  await sb.from('messages').update({ text: chatCallInviteMessageMissed(name) }).eq('id', row.id)
 }
 
 let lastUploadError = ''

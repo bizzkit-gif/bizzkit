@@ -14,7 +14,7 @@ const NAV = [
 ]
 
 export default function App() {
-  const { user, loading, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId } = useApp()
+  const { user, loading, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
 
   const go = (t: string) => { setPrevTab(tab); setTab(t); if(t!=='profile') setViewId(null) }
   const viewBiz = (id: string) => { setViewId(id); setPrevTab(tab); setTab('profile') }
@@ -50,7 +50,7 @@ export default function App() {
           <div key={n.id} className={`bni${tab===n.id||(n.id==='profile'&&(tab==='trust'||tab==='kyc'))?' on':''}`} onClick={() => go(n.id)}>
             <div className="bni-ico">
               {n.icon}
-              {n.id==='messages'&&unread>0&&<div className="bni-badge">{unread>9?'9+':unread}</div>}
+              {n.id==='messages'&&(unread>0||!!pendingChatCallFromBusinessId)&&<div className="bni-badge">{unread>0?(unread>9?'9+':unread):'!'}</div>}
               {n.id==='random'&&!!pendingRandomCallFromBusinessId&&<div className="bni-badge">!</div>}
             </div>
             <span className="bni-lbl">{n.label}</span>

@@ -23,7 +23,7 @@ const cleanDisplayText = (value?: string | null): string => {
 }
 
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
-  const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId } = useApp()
+  const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
   const [feedView, setFeedView] = useState<'feed'|'explore'|'connected'>('feed')
   const [filter, setFilter] = useState('All')
@@ -40,7 +40,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   }>>([])
   const [loading, setLoading] = useState(true)
   /** Same source as bottom-nav Chat badge: updates on Realtime (includes Random call invite messages). */
-  const bellBadgeCount = Math.max(unread, pendingRandomCallFromBusinessId ? 1 : 0)
+  const bellBadgeCount = Math.max(unread, pendingRandomCallFromBusinessId ? 1 : 0, pendingChatCallFromBusinessId ? 1 : 0)
 
   useEffect(() => {
     let active = true
@@ -99,6 +99,11 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const openNotifications = () => {
     if (unread > 0) {
       toast(`You have ${unread} unread message${unread > 1 ? 's' : ''}`, 'info')
+      setTab('messages')
+      return
+    }
+    if (pendingChatCallFromBusinessId) {
+      toast('Incoming Chat call — open Chat to answer', 'info')
       setTab('messages')
       return
     }

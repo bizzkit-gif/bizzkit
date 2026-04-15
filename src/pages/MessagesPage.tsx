@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText } from '../lib/db'
+import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useApp } from '../context/ctx'
 
@@ -93,6 +93,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
 }
 
 function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: string; other: Business | null; myBiz: Business; myId: string; onBack: () => void; toast: (msg: string, type?: 'success' | 'error' | 'info') => void }) {
+  const { pendingChatCallFromBusinessId, clearPendingChatCall } = useApp()
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -107,6 +108,13 @@ function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: strin
 
   useEffect(() => { load() }, [load])
   useEffect(() => { bottom.current?.scrollIntoView({ behavior:'smooth' }) }, [msgs])
+
+  useEffect(() => {
+    if (!other || !pendingChatCallFromBusinessId) return
+    if (other.id !== pendingChatCallFromBusinessId) return
+    setInCall(true)
+    clearPendingChatCall()
+  }, [other?.id, pendingChatCallFromBusinessId, clearPendingChatCall])
 
   useEffect(() => {
     const ch = sb.channel('chat-' + chatId)
@@ -127,9 +135,18 @@ function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: strin
     setSending(false)
   }
 
-  const startCall = () => {
+  const startCall = async () => {
     if (!other) {
       toast('Could not start call', 'error')
+      return
+    }
+    const { error } = await sb.from('messages').insert({
+      chat_id: chatId,
+      sender_id: myId,
+      text: chatCallInviteMessageRinging(myBiz.name),
+    })
+    if (error) {
+      toast('Could not ring the other party: ' + error.message, 'error')
       return
     }
     setInCall(true)
@@ -154,7 +171,9 @@ function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: strin
           other={other}
           signalingChannelId={signalingChannelId}
           onEnd={() => setInCall(false)}
+          onEndWithoutRemote={() => markLatestChatCallInviteAsMissed(myId, other.id)}
           headerEmoji="📞"
+          connectingHint={`Connecting… waiting for ${other.name} to join.`}
         />
       </div>
     )
