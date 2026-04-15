@@ -23,7 +23,7 @@ const cleanDisplayText = (value?: string | null): string => {
 }
 
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
-  const { myBiz, user, toast, setTab } = useApp()
+  const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
   const [feedView, setFeedView] = useState<'discover'|'connected'>('discover')
   const [filter, setFilter] = useState('All')
@@ -31,7 +31,8 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [conns, setConns] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
-  const [notifCount, setNotifCount] = useState(0)
+  /** Same source as bottom-nav Chat badge: updates on Realtime (includes Random call invite messages). */
+  const bellBadgeCount = Math.max(unread, pendingRandomCallFromBusinessId ? 1 : 0)
 
   useEffect(() => {
     let active = true
@@ -70,33 +71,15 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     return () => { active = false }
   }, [myBiz?.id, user?.id])
 
-  useEffect(() => {
-    if (!myBiz) { setNotifCount(0); return }
-
-    const loadNotifCount = async () => {
-      const { data: chats, error } = await sb
-        .from('chats')
-        .select('id')
-        .or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
-      if (error || !chats?.length) { setNotifCount(0); return }
-
-      const chatIds = chats.map(c => c.id)
-      const { count } = await sb
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .in('chat_id', chatIds)
-        .neq('sender_id', myBiz.id)
-        .eq('read', false)
-      setNotifCount(count || 0)
-    }
-
-    loadNotifCount()
-  }, [myBiz?.id])
-
   const openNotifications = () => {
-    if (notifCount > 0) {
-      toast(`You have ${notifCount} unread message${notifCount > 1 ? 's' : ''}`, 'info')
+    if (unread > 0) {
+      toast(`You have ${unread} unread message${unread > 1 ? 's' : ''}`, 'info')
       setTab('messages')
+      return
+    }
+    if (pendingRandomCallFromBusinessId) {
+      toast('Incoming Random call — open Random to answer', 'info')
+      setTab('random')
       return
     }
     toast('No new notifications', 'info')
@@ -148,9 +131,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         <div className="logo-txt">bizz<span>kit</span></div>
         <div style={{ position:'relative' }}>
           <div className="icon-btn" onClick={openNotifications}>🔔</div>
-          {notifCount > 0 && (
+          {bellBadgeCount > 0 && (
             <div style={{ position:'absolute', top:-4, right:-4, minWidth:18, height:18, borderRadius:9, background:'#FF4B6E', color:'#fff', fontSize:10, fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 5px' }}>
-              {notifCount > 9 ? '9+' : notifCount}
+              {bellBadgeCount > 9 ? '9+' : bellBadgeCount}
             </div>
           )}
         </div>

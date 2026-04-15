@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo } from '../lib/db'
+import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 const normalizeLogoImage = (value?: string | null): string | null => {
@@ -81,7 +81,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
                 {c.last_ts && <div style={{ fontSize:10, color:'#7A92B0', flexShrink:0, marginLeft:8 }}>{timeAgo(c.last_ts)}</div>}
               </div>
               <div style={{ fontSize:10.5, color:'#3A5070', marginTop:1 }}>{c.other_biz.industry} · {c.other_biz.city}</div>
-              {c.last_msg && <div style={{ fontSize:12, color:(c.unread||0)>0?'#fff':'#3A5070', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:(c.unread||0)>0?600:400 }}>{c.last_msg}</div>}
+              {c.last_msg && <div style={{ fontSize:12, color:(c.unread||0)>0?'#fff':'#3A5070', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:(c.unread||0)>0?600:400 }}>{displayChatMessageText(c.last_msg)}</div>}
             </div>
             <div style={{ color:'#3A5070', fontSize:16 }}>›</div>
           </div>
@@ -191,7 +191,7 @@ function ChatView({ chatId, other, myId, onBack, toast }: { chatId:string; other
                   </div>}
                   {!mine && i > 0 && <div style={{ width:26, flexShrink:0 }} />}
                   <div style={{ maxWidth:'72%' }}>
-                    <div style={{ padding:'8px 11px', borderRadius:mine?'14px 14px 4px 14px':'14px 14px 14px 4px', background:mine?'#1E7EF7':'#1A2D47', color:'#fff', fontSize:13, lineHeight:1.5, border:mine?'none':'1px solid rgba(255,255,255,0.07)' }}>{m.text}</div>
+                    <div style={{ padding:'8px 11px', borderRadius:mine?'14px 14px 4px 14px':'14px 14px 14px 4px', background:mine?'#1E7EF7':'#1A2D47', color:'#fff', fontSize:13, lineHeight:1.5, border:mine?'none':'1px solid rgba(255,255,255,0.07)' }}>{displayChatMessageText(m.text)}</div>
                     <div style={{ fontSize:9.5, color:'#3A5070', marginTop:2, textAlign:mine?'right':'left' }}>{fmtTime(m.created_at)}</div>
                   </div>
                 </div>

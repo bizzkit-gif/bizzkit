@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business } from '../lib/db'
+import { sb, Business, RANDOM_CALL_INVITE_MARKER } from '../lib/db'
 
 type ToastType = 'success' | 'error' | 'info'
 
@@ -18,10 +18,12 @@ type Ctx = {
   unread: number
   setUnread: (n: number) => void
   refreshBiz: () => Promise<Business | null>
-  toast: (msg: string, type?: ToastType) => void
+  toast: (msg: string, type?: ToastType, durationMs?: number) => void
   toastMsg: string
   toastType: string
   toastVisible: boolean
+  pendingRandomCallFromBusinessId: string | null
+  clearPendingRandomCall: () => void
 }
 
 const AppCtx = createContext<Ctx>({} as Ctx)
@@ -39,14 +41,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [toastMsg, setToastMsg] = useState('')
   const [toastType, setToastType] = useState('success')
   const [toastVisible, setToastVisible] = useState(false)
+  const [pendingRandomCallFromBusinessId, setPendingRandomCallFromBusinessId] = useState<string | null>(null)
   const unreadRef = useRef(0)
+  const toastHideRef = useRef<number | null>(null)
+  const lastRandomInviteMsgIdRef = useRef<string | null>(null)
 
-  const toast = useCallback((msg: string, type: ToastType = 'success') => {
+  const clearPendingRandomCall = useCallback(() => {
+    setPendingRandomCallFromBusinessId(null)
+  }, [])
+
+  const toast = useCallback((msg: string, type: ToastType = 'success', durationMs = 2800) => {
+    if (toastHideRef.current) {
+      window.clearTimeout(toastHideRef.current)
+      toastHideRef.current = null
+    }
     setToastMsg(msg)
     setToastType(type)
     setToastVisible(true)
-    setTimeout(() => setToastVisible(false), 2800)
+    toastHideRef.current = window.setTimeout(() => {
+      setToastVisible(false)
+      toastHideRef.current = null
+    }, durationMs)
   }, [])
+
+  type RandomInviteRow = { id?: string; sender_id?: string; text?: string | null }
+
+  const handleRandomInviteRow = useCallback((row: RandomInviteRow) => {
+    if (!myBiz?.id) return
+    if (!row?.sender_id || row.sender_id === myBiz.id) return
+    const text = row.text || ''
+    if (!text.includes(RANDOM_CALL_INVITE_MARKER)) return
+    // Only active ring invites — not rewritten "Missed call from …" rows.
+    if (!text.includes('is calling you')) return
+    if (row.id && lastRandomInviteMsgIdRef.current === row.id) return
+    if (row.id) lastRandomInviteMsgIdRef.current = row.id
+    setPendingRandomCallFromBusinessId(row.sender_id)
+    if (navigator.vibrate) navigator.vibrate([220, 120, 220, 120, 220, 120, 220])
+    toast('📞 Incoming Random call — tap Random to answer', 'info', 5200)
+    setTab('random')
+  }, [myBiz?.id, toast, setTab])
 
   const refreshBiz = useCallback(async (): Promise<Business | null> => {
     if (!user) return null
@@ -100,22 +133,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    const onMessageInsert = async (payload: { new: Record<string, unknown> }) => {
+      const row = payload.new as { id?: string; chat_id?: string; sender_id?: string; text?: string | null }
+      if (!row?.chat_id || !row?.sender_id || row.sender_id === myBiz.id) return
+      const { data: chat } = await sb.from('chats').select('participant_a,participant_b').eq('id', row.chat_id).single()
+      if (!chat) return
+      const isMine = chat.participant_a === myBiz.id || chat.participant_b === myBiz.id
+      if (!isMine) return
+
+      if (row.text?.includes(RANDOM_CALL_INVITE_MARKER)) {
+        handleRandomInviteRow(row)
+        await refreshUnread()
+        return
+      }
+
+      const prevUnread = unreadRef.current
+      await refreshUnread()
+      if (unreadRef.current > prevUnread) {
+        if (navigator.vibrate) navigator.vibrate([120, 60, 120])
+        if (tab !== 'messages') toast('New message received 💬', 'info')
+      }
+    }
+
     refreshUnread()
     const ch = sb.channel('global-unread-' + myBiz.id)
-      .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, async (payload) => {
-        const row = payload.new as { chat_id?: string; sender_id?: string }
-        if (!row?.chat_id || !row?.sender_id || row.sender_id === myBiz.id) return
-        const { data: chat } = await sb.from('chats').select('participant_a,participant_b').eq('id', row.chat_id).single()
-        if (!chat) return
-        const isMine = chat.participant_a === myBiz.id || chat.participant_b === myBiz.id
-        if (!isMine) return
-        const prevUnread = unreadRef.current
-        await refreshUnread()
-        if (unreadRef.current > prevUnread) {
-          if (navigator.vibrate) navigator.vibrate([120, 60, 120])
-          if (tab !== 'messages') toast('New message received 💬', 'info')
-        }
-      })
+      .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, onMessageInsert)
       .on('postgres_changes', { event:'UPDATE', schema:'public', table:'messages' }, refreshUnread)
       .subscribe()
 
@@ -123,7 +165,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       active = false
       sb.removeChannel(ch)
     }
-  }, [myBiz?.id, tab, toast])
+  }, [myBiz?.id, tab, toast, handleRandomInviteRow])
+
+  // Poll for Random call invites when Realtime is delayed or the app was in background (mobile Safari).
+  useEffect(() => {
+    if (!myBiz?.id) return
+
+    const pollRecentInvite = async () => {
+      const sinceIso = new Date(Date.now() - 120_000).toISOString()
+      const { data: chats } = await sb.from('chats').select('id').or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
+      const chatIds = (chats || []).map((c: { id: string }) => c.id)
+      if (!chatIds.length) return
+      const { data: recent } = await sb
+        .from('messages')
+        .select('id,sender_id,text,created_at')
+        .in('chat_id', chatIds)
+        .neq('sender_id', myBiz.id)
+        .gte('created_at', sinceIso)
+        .ilike('text', `%${RANDOM_CALL_INVITE_MARKER}%`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+      const latest = recent?.[0] as { id?: string; sender_id?: string; text?: string } | undefined
+      if (!latest?.sender_id || !latest.text?.includes(RANDOM_CALL_INVITE_MARKER)) return
+      if (!latest.text?.includes('is calling you')) return
+      handleRandomInviteRow(latest)
+    }
+
+    const wrappedPoll = () => { void pollRecentInvite() }
+    const interval = window.setInterval(wrappedPoll, 12_000)
+    const onVis = () => {
+      if (document.visibilityState === 'visible') wrappedPoll()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    wrappedPoll()
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+  }, [myBiz?.id, handleRandomInviteRow])
 
   return (
     <AppCtx.Provider value={{
@@ -133,7 +212,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       chatWith, setChatWith,
       unread, setUnread,
       refreshBiz,
-      toast, toastMsg, toastType, toastVisible
+      toast, toastMsg, toastType, toastVisible,
+      pendingRandomCallFromBusinessId, clearPendingRandomCall
     }}>
       {children}
     </AppCtx.Provider>

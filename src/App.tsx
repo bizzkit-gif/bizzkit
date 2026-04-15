@@ -14,7 +14,7 @@ const NAV = [
 ]
 
 export default function App() {
-  const { user, loading, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible } = useApp()
+  const { user, loading, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId } = useApp()
 
   const go = (t: string) => { setPrevTab(tab); setTab(t); if(t!=='profile') setViewId(null) }
   const viewBiz = (id: string) => { setViewId(id); setPrevTab(tab); setTab('profile') }
@@ -43,7 +43,7 @@ export default function App() {
   return (
     <div className="shell">
       <div className="screen-area">
-        <div className="screen" key={tab+(viewId||'')}>{screen()}</div>
+        <div className={`screen${tab === 'random' ? ' screen-fit' : ''}`} key={tab+(viewId||'')}>{screen()}</div>
       </div>
       <nav className="bnav">
         {NAV.map(n => (
@@ -51,6 +51,7 @@ export default function App() {
             <div className="bni-ico">
               {n.icon}
               {n.id==='messages'&&unread>0&&<div className="bni-badge">{unread>9?'9+':unread}</div>}
+              {n.id==='random'&&!!pendingRandomCallFromBusinessId&&<div className="bni-badge">!</div>}
             </div>
             <span className="bni-lbl">{n.label}</span>
           </div>

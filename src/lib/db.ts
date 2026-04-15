@@ -5,6 +5,45 @@ const SUPABASE_URL = 'https://ganberetmowmaidioryu.supabase.co'
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhbmJlcmV0bW93bWFpZGlvcnl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTg5MzksImV4cCI6MjA4OTQ3NDkzOX0.5-mD0cFberNXOmSh8F0lItV6wbTJE0zHjCiPFAYfExE'
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_KEY)
+
+/** Prefix in chat messages used to signal an incoming Random video call invite. */
+export const RANDOM_CALL_INVITE_MARKER = '[RANDOM_CALL_INVITE]'
+
+export function randomCallInviteMessageRinging(callerName: string): string {
+  return `${RANDOM_CALL_INVITE_MARKER} ${callerName} is calling you in Random.`
+}
+
+export function randomCallInviteMessageMissed(callerName: string): string {
+  return `${RANDOM_CALL_INVITE_MARKER} Missed call from ${callerName}`
+}
+
+/** Hide internal marker in chat UI; stored text still includes it for detection. */
+export function displayChatMessageText(text: string | null | undefined): string {
+  const t = (text || '').trim()
+  if (!t.startsWith(RANDOM_CALL_INVITE_MARKER)) return t
+  const rest = t.slice(RANDOM_CALL_INVITE_MARKER.length).trim()
+  return rest || t
+}
+
+/** After decline or end without connecting, rewrite the latest invite line to "Missed call from …". */
+export async function markLatestRandomCallInviteAsMissed(bizA: string, bizB: string): Promise<void> {
+  const { data: chatId } = await sb.rpc('get_or_create_chat', { biz_a: bizA, biz_b: bizB })
+  if (!chatId) return
+  const { data: rows } = await sb
+    .from('messages')
+    .select('id,sender_id,text')
+    .eq('chat_id', chatId)
+    .ilike('text', `%${RANDOM_CALL_INVITE_MARKER}%`)
+    .order('created_at', { ascending: false })
+    .limit(1)
+  const row = rows?.[0]
+  if (!row?.text) return
+  if (!row.text.includes('is calling you')) return
+  const { data: caller } = await sb.from('businesses').select('name').eq('id', row.sender_id).single()
+  const name = (caller?.name || 'Someone').trim() || 'Someone'
+  await sb.from('messages').update({ text: randomCallInviteMessageMissed(name) }).eq('id', row.id)
+}
+
 let lastUploadError = ''
 
 export function getLastUploadError() {

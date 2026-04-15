@@ -33,6 +33,9 @@ input,textarea,select,button{font-family:'DM Sans',sans-serif;-webkit-appearance
 .screen-area{flex:1;overflow:hidden;position:relative;min-height:0;}
 .screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;background:#0A1628;animation:fi .2s ease both;padding-top:var(--safe-top);}
 .screen::-webkit-scrollbar{display:none;}
+/* Random tab: one column fills viewport; pages manage their own scroll if needed */
+.screen-fit{display:flex;flex-direction:column;overflow:hidden;}
+.screen-fit > *{flex:1;min-height:0;min-width:0;display:flex;flex-direction:column;}
 @keyframes fi{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:translateX(0)}}
 
 /* ── BOTTOM NAV ────────────────────────────────── */

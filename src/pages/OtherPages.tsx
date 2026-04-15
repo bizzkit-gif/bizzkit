@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError } from '../lib/db'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 const GRADS = ['gr1','gr2','gr3','gr4','gr5','gr6','gr7','gr8']
@@ -960,8 +960,7 @@ return (
 
 // ── GO RANDOM ─────────────────────────────────────────────────────
 export function GoRandomPage() {
-const { myBiz, toast } = useApp()
-const RANDOM_CALL_MARKER = '[RANDOM_CALL_INVITE]'
+const { myBiz, toast, pendingRandomCallFromBusinessId, clearPendingRandomCall } = useApp()
 const [pool, setPool] = useState<Business[]>([])
 const [idx, setIdx] = useState(0)
 const [sessions, setSessions] = useState(0)
@@ -1004,11 +1003,11 @@ useEffect(() => {
       .in('chat_id', chatIds)
       .neq('sender_id', myBiz.id)
       .gte('created_at', sinceIso)
-      .ilike('text', `%${RANDOM_CALL_MARKER}%`)
+      .ilike('text', `%${RANDOM_CALL_INVITE_MARKER}%`)
       .order('created_at', { ascending:false })
       .limit(1)
     const latest = recent?.[0]
-    if (!latest?.sender_id) return
+    if (!latest?.sender_id || !latest.text?.includes('is calling you')) return
     const known = pool.find((b) => b.id === latest.sender_id) || null
     if (known) setIncomingCallFrom(known)
     else {
@@ -1017,33 +1016,49 @@ useEffect(() => {
     }
   }
   loadRecentInvite()
+}, [myBiz?.id, pool])
 
-  const ch = sb.channel('random-call-msg-' + myBiz.id)
-    .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, async (payload) => {
-      const row = payload.new as { sender_id?: string; text?: string }
-      if (!row?.sender_id || row.sender_id === myBiz.id || !row.text?.includes(RANDOM_CALL_MARKER)) return
-      const known = pool.find((b) => b.id === row.sender_id) || null
-      if (known) setIncomingCallFrom(known)
-      else {
-        const { data } = await sb.from('businesses').select('*').eq('id', row.sender_id).single()
-        if (data) setIncomingCallFrom(data as Business)
+useEffect(() => {
+  if (!myBiz || !pendingRandomCallFromBusinessId) return
+  let cancelled = false
+  const sid = pendingRandomCallFromBusinessId
+  ;(async () => {
+    const known = pool.find((b) => b.id === sid) || null
+    if (known) {
+      if (!cancelled) {
+        setIncomingCallFrom(known)
+        clearPendingRandomCall()
       }
-      toast('Incoming random call 📞', 'info')
-      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200])
-      if (callAlertTimerRef.current) window.clearInterval(callAlertTimerRef.current)
-      callAlertTimerRef.current = window.setInterval(() => {
-        if (navigator.vibrate) navigator.vibrate(120)
-      }, 1800)
-    })
-    .subscribe()
+      return
+    }
+    const { data } = await sb.from('businesses').select('*').eq('id', sid).single()
+    if (!cancelled && data) {
+      setIncomingCallFrom(data as Business)
+      clearPendingRandomCall()
+    }
+  })()
+  return () => { cancelled = true }
+}, [myBiz?.id, pendingRandomCallFromBusinessId, pool, clearPendingRandomCall])
+
+useEffect(() => {
+  if (!incomingCallFrom) {
+    if (callAlertTimerRef.current) {
+      window.clearInterval(callAlertTimerRef.current)
+      callAlertTimerRef.current = null
+    }
+    return
+  }
+  if (callAlertTimerRef.current) window.clearInterval(callAlertTimerRef.current)
+  callAlertTimerRef.current = window.setInterval(() => {
+    if (navigator.vibrate) navigator.vibrate(120)
+  }, 1800)
   return () => {
-    sb.removeChannel(ch)
     if (callAlertTimerRef.current) {
       window.clearInterval(callAlertTimerRef.current)
       callAlertTimerRef.current = null
     }
   }
-}, [myBiz?.id, pool, toast])
+}, [incomingCallFrom])
 
 const match = pool.length ? pool[idx % pool.length] : null
 const next = () => {
@@ -1078,7 +1093,8 @@ const startRandomCall = async () => {
   await sb.from('messages').insert({
     chat_id: chatId,
     sender_id: myBiz.id,
-    text: `${RANDOM_CALL_MARKER} ${myBiz.name} is calling you in Random.`
+    read: false,
+    text: randomCallInviteMessageRinging(myBiz.name)
   })
   toast(`Calling ${match.name}...`, 'info')
   setActiveCallWith(match)
@@ -1086,25 +1102,28 @@ const startRandomCall = async () => {
 
 if (!myBiz) return <div className="empty"><div className="ico">🎲</div><h3>Go Random</h3><p>Create a business profile to start random video calls.</p></div>
 if (!match) return <div className="empty"><div className="ico">🎲</div><h3>No businesses available</h3><p>Ask more businesses to join Bizzkit to start random calls.</p></div>
-if (activeCallWith) return <RandomCallRoom myBiz={myBiz} other={activeCallWith} onBack={() => setActiveCallWith(null)} />
+if (activeCallWith) return <RandomCallRoom myBiz={myBiz} other={activeCallWith} onEnd={() => setActiveCallWith(null)} />
 
 return (
-<div style={{ paddingBottom:16 }}>
+<div style={{ display:'flex', flexDirection:'column', height:'100%', minHeight:0, overflow:'hidden' }}>
 {incomingCallFrom && (
-  <div style={{ margin:'0 16px 12px', background:'rgba(30,126,247,0.15)', border:'1px solid rgba(30,126,247,0.45)', borderRadius:13, padding:'12px 13px' }}>
-    <div style={{ fontFamily:'Syne, sans-serif', fontSize:13, fontWeight:700, marginBottom:4 }}>📞 Incoming Call</div>
-    <div style={{ fontSize:11.5, color:'#7A92B0', marginBottom:9 }}>{incomingCallFrom.name} is calling you in Random.</div>
+  <div style={{ margin:'0 12px 8px', flexShrink:0, background:'rgba(30,126,247,0.15)', border:'1px solid rgba(30,126,247,0.45)', borderRadius:12, padding:'10px 11px' }}>
+    <div style={{ fontFamily:'Syne, sans-serif', fontSize:12.5, fontWeight:700, marginBottom:3 }}>📞 Incoming Call</div>
+    <div style={{ fontSize:11, color:'#7A92B0', marginBottom:8 }}>{incomingCallFrom.name} is calling you in Random.</div>
     <div style={{ display:'flex', gap:8 }}>
       <button className="btn btn-green btn-sm" style={{ flex:1 }} onClick={() => {
         setActiveCallWith(incomingCallFrom)
         setIncomingCallFrom(null)
+        clearPendingRandomCall()
         if (callAlertTimerRef.current) {
           window.clearInterval(callAlertTimerRef.current)
           callAlertTimerRef.current = null
         }
       }}>Accept</button>
       <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={() => {
+        void markLatestRandomCallInviteAsMissed(myBiz.id, incomingCallFrom.id)
         setIncomingCallFrom(null)
+        clearPendingRandomCall()
         if (callAlertTimerRef.current) {
           window.clearInterval(callAlertTimerRef.current)
           callAlertTimerRef.current = null
@@ -1113,62 +1132,64 @@ return (
     </div>
   </div>
 )}
-<div className="topbar"><div className="page-title">🎲 Go Random</div><div style={{ fontSize:11, color:'#7A92B0' }}>Speed networking</div></div>
-<div style={{ textAlign:'center', padding:'0 20px 14px', fontSize:12, color:'#7A92B0', lineHeight:1.5 }}>Get randomly matched with real businesses and start an in-app video call.</div>
-<div style={{ margin:'0 16px 14px', background:'#1A2D47', borderRadius:20, padding:'18px 15px', border:'1px solid rgba(255,255,255,0.07)', transition:'opacity .2s', opacity:fading?0:1 }}>
-<div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:15 }}>
-<div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:5, flex:1 }}>
-<div style={{ width:62, height:62, borderRadius:'50%', background:'rgba(30,126,247,0.2)', border:'2.5px solid #1E7EF7', display:'flex', alignItems:'center', justifyContent:'center', fontSize:25 }}>{myBiz?logoText(myBiz.name).slice(0,1):'👤'}</div>
-<div style={{ fontFamily:'Syne, sans-serif', fontSize:11, fontWeight:700, textAlign:'center' }}>You</div>
-<div style={{ fontSize:10, color:'#7A92B0', textAlign:'center' }}>{myBiz?.name||'Your Business'}</div>
+<div style={{ flex:1, minHeight:0, overflowY:'auto', overflowX:'hidden', WebkitOverflowScrolling:'touch' }}>
+<div className="topbar" style={{ paddingTop:4, paddingBottom:6 }}><div className="page-title">🎲 Go Random</div><div style={{ fontSize:10.5, color:'#7A92B0' }}>Speed networking</div></div>
+<div style={{ textAlign:'center', padding:'0 14px 8px', fontSize:11, color:'#7A92B0', lineHeight:1.45 }}>Match with businesses and start a video call.</div>
+<div style={{ margin:'0 12px 8px', background:'#1A2D47', borderRadius:14, padding:'10px 12px', border:'1px solid rgba(255,255,255,0.07)', transition:'opacity .2s', opacity:fading?0:1 }}>
+<div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:6, marginBottom:10 }}>
+<div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3, flex:1, minWidth:0 }}>
+<div style={{ width:48, height:48, borderRadius:'50%', background:'rgba(30,126,247,0.2)', border:'2px solid #1E7EF7', display:'flex', alignItems:'center', justifyContent:'center', fontSize:20 }}>{myBiz?logoText(myBiz.name).slice(0,1):'👤'}</div>
+<div style={{ fontFamily:'Syne, sans-serif', fontSize:10, fontWeight:700, textAlign:'center' }}>You</div>
+<div style={{ fontSize:9.5, color:'#7A92B0', textAlign:'center', maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{myBiz?.name||'Your Business'}</div>
 </div>
-<div style={{ width:34, height:34, borderRadius:'50%', background:'#0A1628', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#7A92B0', flexShrink:0 }}>VS</div>
-<div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:5, flex:1 }}>
-<div style={{ width:62, height:62, borderRadius:'50%', background:'rgba(255,107,53,0.15)', border:'2.5px solid #FF6B35', display:'flex', alignItems:'center', justifyContent:'center', fontSize:25 }} className={!connected.has(match.id)?'pulse':''}>{logoText(match.name).slice(0,1)}</div>
-<div style={{ fontFamily:'Syne, sans-serif', fontSize:11, fontWeight:700, textAlign:'center' }}>{match.name}</div>
-<div style={{ fontSize:10, color:'#7A92B0', textAlign:'center' }}>{match.type} · {match.industry}</div>
+<div style={{ width:28, height:28, borderRadius:'50%', background:'#0A1628', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:800, color:'#7A92B0', flexShrink:0 }}>VS</div>
+<div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3, flex:1, minWidth:0 }}>
+<div style={{ width:48, height:48, borderRadius:'50%', background:'rgba(255,107,53,0.15)', border:'2px solid #FF6B35', display:'flex', alignItems:'center', justifyContent:'center', fontSize:20 }} className={!connected.has(match.id)?'pulse':''}>{logoText(match.name).slice(0,1)}</div>
+<div style={{ fontFamily:'Syne, sans-serif', fontSize:10, fontWeight:700, textAlign:'center', maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{match.name}</div>
+<div style={{ fontSize:9.5, color:'#7A92B0', textAlign:'center', lineHeight:1.2 }}>{match.type} · {match.industry}</div>
 </div>
 </div>
-<div style={{ background:'#0A1628', borderRadius:13, padding:'11px 13px' }}>
-<div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-<div>
-<div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:5 }}>
-{match.kyc_verified ? <><span className="kyc-dot" /><span style={{ fontSize:10.5, fontWeight:700, color:'#00D4A0' }}>KYC Verified</span></> : <span style={{ fontSize:10.5, color:'#3A5070' }}>Not verified</span>}
+<div style={{ background:'#0A1628', borderRadius:10, padding:'8px 10px' }}>
+<div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8 }}>
+<div style={{ minWidth:0 }}>
+<div style={{ display:'flex', alignItems:'center', gap:4, marginBottom:4 }}>
+{match.kyc_verified ? <><span className="kyc-dot" /><span style={{ fontSize:10, fontWeight:700, color:'#00D4A0' }}>KYC Verified</span></> : <span style={{ fontSize:10, color:'#3A5070' }}>Not verified</span>}
 </div>
-<div style={{ display:'flex', gap:5, flexWrap:'wrap' }}>
-{[match.industry, match.type].filter(Boolean).map(t => <span key={t} style={{ background:'rgba(30,126,247,0.12)', color:'#4D9DFF', fontSize:10, fontWeight:600, padding:'3px 7px', borderRadius:6 }}>{t}</span>)}
+<div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+{[match.industry, match.type].filter(Boolean).map(t => <span key={t} style={{ background:'rgba(30,126,247,0.12)', color:'#4D9DFF', fontSize:9, fontWeight:600, padding:'2px 6px', borderRadius:5 }}>{t}</span>)}
 </div>
-<div style={{ fontSize:10.5, color:'#7A92B0', marginTop:5 }}>📍 {match.city}, {match.country}</div>
+<div style={{ fontSize:10, color:'#7A92B0', marginTop:4 }}>📍 {match.city}, {match.country}</div>
 </div>
 <div style={{ textAlign:'right', flexShrink:0 }}>
-<div style={{ fontFamily:'Syne, sans-serif', fontSize:22, fontWeight:800, color:tierColor(tier(match.trust_score||0)) }}>{match.trust_score||0}</div>
-<div style={{ fontSize:10, color:'#7A92B0' }}>Trust Score</div>
+<div style={{ fontFamily:'Syne, sans-serif', fontSize:18, fontWeight:800, color:tierColor(tier(match.trust_score||0)) }}>{match.trust_score||0}</div>
+<div style={{ fontSize:9, color:'#7A92B0' }}>Trust</div>
 </div>
 </div>
 </div>
 </div>
-<div style={{ display:'flex', gap:9, padding:'0 16px', marginBottom:9 }}>
-<button className="btn btn-ghost" style={{ flex:1 }} onClick={next}>→ Next</button>
-<button className="btn btn-green" style={{ flex:1.4 }} onClick={startRandomCall}>Start Call</button>
+<div style={{ display:'flex', gap:8, padding:'0 12px', marginBottom:8 }}>
+<button className="btn btn-ghost" style={{ flex:1, padding:'9px 8px', fontSize:12 }} onClick={next}>→ Next</button>
+<button className="btn btn-green" style={{ flex:1.4, padding:'9px 8px', fontSize:12 }} onClick={startRandomCall}>Start Call</button>
 </div>
-<div style={{ padding:'0 16px', marginBottom:13 }}>
-<button className="btn btn-blue btn-full btn-sm" onClick={connect} disabled={connected.has(match.id)}>{connected.has(match.id)?'✓ Connected':'Connect ✓'}</button>
+<div style={{ padding:'0 12px', marginBottom:8 }}>
+<button className="btn btn-blue btn-full btn-sm" style={{ padding:'9px' }} onClick={connect} disabled={connected.has(match.id)}>{connected.has(match.id)?'✓ Connected':'Connect ✓'}</button>
 </div>
-<div style={{ margin:'0 16px', background:'#152236', borderRadius:13, padding:'11px 13px', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+<div style={{ margin:'0 12px 10px', background:'#152236', borderRadius:10, padding:'8px 11px', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
 <div>
-<div style={{ fontSize:12, fontWeight:700, marginBottom:5 }}>Sessions this month</div>
-<div style={{ display:'flex', gap:5 }}>{Array.from({length:3}).map((_,i) => <div key={i} style={{ width:26, height:7, borderRadius:4, background:i<sessions?'#3A5070':'#00D4A0' }} />)}</div>
+<div style={{ fontSize:11, fontWeight:700, marginBottom:3 }}>Sessions</div>
+<div style={{ display:'flex', gap:4 }}>{Array.from({length:3}).map((_,i) => <div key={i} style={{ width:22, height:6, borderRadius:3, background:i<sessions?'#3A5070':'#00D4A0' }} />)}</div>
 </div>
 <div style={{ textAlign:'right' }}>
-<div style={{ fontSize:11, color:'#7A92B0' }}>{sessions} matches viewed</div>
-<div style={{ fontSize:11, color:'#1E7EF7', fontWeight:700, cursor:'pointer', marginTop:3 }} onClick={() => toast('Upgrade for unlimited sessions!','info')}>Upgrade →</div>
+<div style={{ fontSize:10, color:'#7A92B0' }}>{sessions} viewed</div>
+<div style={{ fontSize:10, color:'#1E7EF7', fontWeight:700, cursor:'pointer', marginTop:2 }} onClick={() => toast('Upgrade for unlimited sessions!','info')}>Upgrade →</div>
+</div>
 </div>
 </div>
 </div>
 )
 }
 
-function RandomCallRoom({ myBiz, other, onBack }: { myBiz: Business; other: Business; onBack: () => void }) {
+function RandomCallRoom({ myBiz, other, onEnd }: { myBiz: Business; other: Business; onEnd: () => void }) {
   const [remoteStream, setRemoteStream] = useState<MediaStream|null>(null)
   const [micOn, setMicOn] = useState(true)
   const [camOn, setCamOn] = useState(true)
@@ -1178,6 +1199,7 @@ function RandomCallRoom({ myBiz, other, onBack }: { myBiz: Business; other: Busi
   const channelRef = useRef<any>(null)
   const peerRef = useRef<RTCPeerConnection|null>(null)
   const peerIdRef = useRef<string>(`rand-${Date.now()}-${Math.random().toString(36).slice(2,8)}`)
+  const remoteConnectedRef = useRef(false)
 
   const room = `random-${[myBiz.id, other.id].sort().join('-').replace(/-/g, '').slice(0, 36)}`
 
@@ -1196,7 +1218,10 @@ function RandomCallRoom({ myBiz, other, onBack }: { myBiz: Business; other: Busi
     if (local) local.getTracks().forEach(track => pc.addTrack(track, local))
     pc.ontrack = (e) => {
       const stream = e.streams?.[0]
-      if (stream) setRemoteStream(stream)
+      if (stream) {
+        remoteConnectedRef.current = true
+        setRemoteStream(stream)
+      }
     }
     pc.onicecandidate = (e) => {
       if (e.candidate) sendSignal({ type:'ice', from:peerIdRef.current, to:'*', payload:e.candidate, bizName:myBiz.name })
@@ -1266,6 +1291,17 @@ function RandomCallRoom({ myBiz, other, onBack }: { myBiz: Business; other: Busi
     }
   }, [createPeer, myBiz.name, room, sendSignal])
 
+  useEffect(() => {
+    if (remoteStream) remoteConnectedRef.current = true
+  }, [remoteStream])
+
+  const handleEnd = async () => {
+    if (!remoteConnectedRef.current) {
+      await markLatestRandomCallInviteAsMissed(myBiz.id, other.id)
+    }
+    onEnd()
+  }
+
   const toggleMic = () => {
     const local = localStreamRef.current
     if (!local) return
@@ -1282,35 +1318,37 @@ function RandomCallRoom({ myBiz, other, onBack }: { myBiz: Business; other: Busi
   }
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:11, padding:'11px 15px 9px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
-        <button onClick={onBack} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:20, cursor:'pointer', padding:'2px 5px', flexShrink:0 }}>←</button>
+    <div style={{ display:'flex', flexDirection:'column', height:'100%', minHeight:0, overflow:'hidden' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 12px 7px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
+        <button type="button" onClick={() => void handleEnd()} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:18, cursor:'pointer', padding:'2px 4px', flexShrink:0 }}>←</button>
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>🎲 Random Call with {other.name}</div>
-          <div style={{ fontSize:10.5, color:'#7A92B0' }}>{other.industry} · {other.city}, {other.country}</div>
+          <div style={{ fontFamily:'Syne, sans-serif', fontSize:13, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>🎲 {other.name}</div>
+          <div style={{ fontSize:10, color:'#7A92B0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{other.industry} · {other.city}</div>
         </div>
       </div>
-      <div style={{ flex:1, overflowY:'auto', padding:12 }}>
-        {starting && <div style={{ fontSize:12, color:'#7A92B0', marginBottom:8 }}>Starting random call… waiting for the other business to join this room.</div>}
-        <div style={{ display:'grid', gridTemplateColumns:'1fr', gap:9 }}>
-          <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, overflow:'hidden' }}>
-            <video ref={localVideoRef} autoPlay muted playsInline style={{ width:'100%', height:'40vh', minHeight:180, objectFit:'cover' }} />
-            <div style={{ padding:'6px 8px', fontSize:11, fontWeight:700 }}>You ({myBiz.name})</div>
+      <div style={{ flex:1, minHeight:0, display:'flex', flexDirection:'column', padding:'6px 10px', gap:6, overflow:'hidden' }}>
+        {starting && (
+          <div style={{ fontSize:10.5, color:'#7A92B0', flexShrink:0, lineHeight:1.35 }}>Connecting… waiting for {other.name}.</div>
+        )}
+        <div style={{ flex:1, minHeight:0, display:'grid', gridTemplateRows:'1fr 1fr', gap:7 }}>
+          <div style={{ minHeight:0, display:'flex', flexDirection:'column', background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10, overflow:'hidden' }}>
+            <video ref={localVideoRef} autoPlay muted playsInline style={{ flex:1, minHeight:0, width:'100%', objectFit:'cover', display:'block' }} />
+            <div style={{ flexShrink:0, padding:'4px 8px', fontSize:10, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>You ({myBiz.name})</div>
           </div>
-          <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, overflow:'hidden' }}>
+          <div style={{ minHeight:0, display:'flex', flexDirection:'column', background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:10, overflow:'hidden' }}>
             {remoteStream ? (
-              <video autoPlay playsInline style={{ width:'100%', height:'40vh', minHeight:180, objectFit:'cover' }} ref={el => { if (el && el.srcObject !== remoteStream) el.srcObject = remoteStream }} />
+              <video autoPlay playsInline style={{ flex:1, minHeight:0, width:'100%', objectFit:'cover', display:'block' }} ref={el => { if (el && el.srcObject !== remoteStream) el.srcObject = remoteStream }} />
             ) : (
-              <div style={{ width:'100%', height:'40vh', minHeight:180, display:'flex', alignItems:'center', justifyContent:'center', color:'#7A92B0', fontSize:12 }}>Waiting for {other.name}...</div>
+              <div style={{ flex:1, minHeight:0, display:'flex', alignItems:'center', justifyContent:'center', color:'#7A92B0', fontSize:11, textAlign:'center', padding:'0 8px' }}>Waiting for {other.name}…</div>
             )}
-            <div style={{ padding:'6px 8px', fontSize:11, fontWeight:700 }}>{other.name}</div>
+            <div style={{ flexShrink:0, padding:'4px 8px', fontSize:10, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{other.name}</div>
           </div>
         </div>
       </div>
-      <div style={{ padding:'10px 12px calc(10px + env(safe-area-inset-bottom,0px))', borderTop:'1px solid rgba(255,255,255,0.07)', display:'flex', gap:8 }}>
-        <button className="btn btn-ghost" style={{ flex:1 }} onClick={toggleMic}>{micOn ? '🎤 Mic On' : '🔇 Mic Off'}</button>
-        <button className="btn btn-ghost" style={{ flex:1 }} onClick={toggleCam}>{camOn ? '📷 Cam On' : '📷 Cam Off'}</button>
-        <button className="btn btn-red" style={{ flex:1 }} onClick={onBack}>End</button>
+      <div style={{ flexShrink:0, padding:'8px 10px calc(8px + env(safe-area-inset-bottom,0px))', borderTop:'1px solid rgba(255,255,255,0.07)', display:'flex', gap:6 }}>
+        <button type="button" className="btn btn-ghost" style={{ flex:1, padding:'8px 6px', fontSize:11 }} onClick={toggleMic}>{micOn ? '🎤 On' : '🔇 Off'}</button>
+        <button type="button" className="btn btn-ghost" style={{ flex:1, padding:'8px 6px', fontSize:11 }} onClick={toggleCam}>{camOn ? '📷 On' : '📷 Off'}</button>
+        <button type="button" className="btn btn-red" style={{ flex:1, padding:'8px 6px', fontSize:11 }} onClick={() => void handleEnd()}>End</button>
       </div>
     </div>
   )
