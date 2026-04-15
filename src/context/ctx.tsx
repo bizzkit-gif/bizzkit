@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import { sb, Business, RANDOM_CALL_INVITE_MARKER, CHAT_CALL_INVITE_MARKER } from '../lib/db'
+import { setEmailHasProfile, clearEmailHasProfile } from '../lib/profileLocal'
 
 type ToastType = 'success' | 'error' | 'info'
 
@@ -124,10 +125,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const refreshBiz = useCallback(async (): Promise<Business | null> => {
     if (!user) return null
+    const em = user.email ? String(user.email).toLowerCase().trim() : ''
     try {
       const { data } = await sb.from('businesses').select('*,products(*)').eq('owner_id', user.id).single()
       const nextBiz = data || null
       setMyBiz(nextBiz)
+      if (em) {
+        if (nextBiz?.id) setEmailHasProfile(em)
+        else clearEmailHasProfile(em)
+      }
       return nextBiz
     } catch {
       setMyBiz(null)

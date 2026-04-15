@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { sb, uploadImage, getLastUploadError, INDUSTRIES, COUNTRIES, getLogo, grad, setAuthStorageMode } from '../lib/db'
+import { emailHasStoredProfile } from '../lib/profileLocal'
 import { useApp } from '../context/ctx'
 
 type QuickBizFields = {
@@ -62,6 +63,19 @@ export default function AuthPage() {
   const [bizCountry, setBizCountry] = useState('')
   const [bizDesc, setBizDesc] = useState('')
   const [keepLoggedIn, setKeepLoggedIn] = useState(true)
+  const [showRegisterAnyway, setShowRegisterAnyway] = useState(false)
+
+  const emailNorm = email.trim().toLowerCase()
+  const hasStoredProfile = emailNorm.length > 0 && emailHasStoredProfile(emailNorm)
+  const simplifiedLogin = hasStoredProfile && !showRegisterAnyway
+
+  useEffect(() => {
+    if (simplifiedLogin) setMode('login')
+  }, [simplifiedLogin])
+
+  useEffect(() => {
+    setShowRegisterAnyway(false)
+  }, [emailNorm])
 
   const quickBiz = (): QuickBizFields => ({
     name: bizName,
@@ -138,10 +152,6 @@ export default function AuthPage() {
         setErr('Phone number is required')
         return
       }
-      if (!govIdUrl) {
-        setErr('Please upload your government ID')
-        return
-      }
       if (pw !== pw2) {
         setErr('Passwords do not match')
         return
@@ -170,7 +180,14 @@ export default function AuthPage() {
         const { data, error } = await sb.auth.signUp({
           email,
           password: pw,
-          options: { data: { first_name: first, last_name: last, phone: phone.trim(), gov_id_url: govIdUrl } },
+          options: {
+            data: {
+              first_name: first,
+              last_name: last,
+              phone: phone.trim(),
+              ...(govIdUrl.trim() ? { gov_id_url: govIdUrl } : {}),
+            },
+          },
         })
         if (error) {
           setErr(error.message)
@@ -207,57 +224,53 @@ export default function AuthPage() {
         <div style={{ color: '#7A92B0', fontSize: 13, marginTop: 6 }}>The Business Showcase &amp; Networking Platform</div>
       </div>
 
-      <div style={{ display: 'flex', margin: '0 18px 10px', background: '#152236', borderRadius: 13, padding: 4, border: '1px solid rgba(255,255,255,0.07)' }}>
-        <button
-          type="button"
-          onClick={() => {
-            setMode('login')
-            setErr('')
-          }}
-          style={{
-            flex: 1,
-            padding: '10px 0',
-            border: 'none',
-            borderRadius: 10,
-            background: mode === 'login' ? '#1E7EF7' : 'transparent',
-            color: mode === 'login' ? '#fff' : '#7A92B0',
-            fontSize: 13,
-            fontWeight: 700,
-            cursor: 'pointer',
-          }}
-        >
-          Log in
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setMode('register')
-            setErr('')
-          }}
-          style={{
-            flex: 1,
-            padding: '10px 0',
-            border: 'none',
-            borderRadius: 10,
-            background: mode === 'register' ? '#1E7EF7' : 'transparent',
-            color: mode === 'register' ? '#fff' : '#7A92B0',
-            fontSize: 13,
-            fontWeight: 700,
-            cursor: 'pointer',
-          }}
-        >
-          Create account
-        </button>
+      <div style={{ margin: '0 18px 10px', padding: '12px 8px', textAlign: 'center' }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#E8EEF5' }}>
+          {mode === 'register' && !simplifiedLogin ? 'Create account' : 'Log in'}
+        </div>
       </div>
 
       <p style={{ margin: '0 22px 16px', fontSize: 12, color: '#7A92B0', lineHeight: 1.5, textAlign: 'center' }}>
-        {mode === 'login'
-          ? 'Already signed up? Enter your email and password. You can add business details below before you sign in.'
-          : 'New to Bizzkit? Fill in your details below. If you already have an account, switch to Log in.'}
+        {simplifiedLogin
+          ? 'Welcome back. Enter your password to continue.'
+          : mode === 'login'
+            ? 'Already signed up? Enter your email and password.'
+            : 'New to Bizzkit? Fill in your details below.'}
       </p>
 
+      {mode === 'login' && (
+        <p style={{ margin: '0 22px 14px', fontSize: 12, textAlign: 'center' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setShowRegisterAnyway(true)
+              setMode('register')
+              setErr('')
+            }}
+            style={{ background: 'none', border: 'none', color: '#4D9DFF', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+          >
+            New here? Create an account
+          </button>
+        </p>
+      )}
+
+      {mode === 'register' && !simplifiedLogin && (
+        <p style={{ margin: '0 22px 14px', fontSize: 12, textAlign: 'center' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('login')
+              setErr('')
+            }}
+            style={{ background: 'none', border: 'none', color: '#4D9DFF', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+          >
+            Already have an account? Log in
+          </button>
+        </p>
+      )}
+
       <form onSubmit={submit} style={{ padding: '0 18px 48px' }}>
-        {mode === 'register' && (
+        {mode === 'register' && !simplifiedLogin && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div className="field">
               <label>First Name</label>
@@ -269,7 +282,7 @@ export default function AuthPage() {
             </div>
           </div>
         )}
-        {mode === 'register' && (
+        {mode === 'register' && !simplifiedLogin && (
           <div className="field">
             <label>Phone Number</label>
             <input type="tel" placeholder="+971 50 123 4567" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" />
@@ -299,15 +312,16 @@ export default function AuthPage() {
             </button>
           )}
         </div>
-        {mode === 'register' && (
+        {mode === 'register' && !simplifiedLogin && (
           <div className="field">
             <label>Confirm Password</label>
             <input type="password" placeholder="Repeat password" value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password" />
           </div>
         )}
-        {mode === 'register' && (
+        {mode === 'register' && !simplifiedLogin && (
           <div className="field">
-            <label>Government ID (Image or PDF)</label>
+            <label>Government ID (optional)</label>
+            <div style={{ fontSize: 11, color: '#7A92B0', marginBottom: 8, lineHeight: 1.4 }}>Image or PDF. You can add this later in Profile / Trust &amp; KYC.</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <label style={{ padding: '8px 14px', borderRadius: 10, background: '#152236', border: '1px solid rgba(255,255,255,0.07)', color: '#7A92B0', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
                 {uploadingGovId ? 'Uploading ID...' : govIdUrl ? 'Change Uploaded ID' : 'Upload Government ID'}
@@ -320,60 +334,62 @@ export default function AuthPage() {
           </div>
         )}
 
-        <div style={{ marginTop: 18, paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 4 }}>Business profile (optional)</div>
-          <div style={{ fontSize: 11, color: '#7A92B0', marginBottom: 12, lineHeight: 1.45 }}>
-            Save time: add your company name and details here. They are saved when you {mode === 'login' ? 'log in' : 'create your account'} (if you do not already have a business profile). Edit anytime in Profile.
-          </div>
-          <div className="field">
-            <label>Business name</label>
-            <input placeholder="e.g. NexaTech Solutions" value={bizName} onChange={(e) => setBizName(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Tagline</label>
-            <input placeholder="Short tagline" value={bizTagline} onChange={(e) => setBizTagline(e.target.value)} />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
-            <div className="field">
-              <label>Industry</label>
-              <select value={bizInd} onChange={(e) => setBizInd(e.target.value)}>
-                <option value="">Select…</option>
-                {INDUSTRIES.map((i) => (
-                  <option key={i} value={i}>
-                    {i}
-                  </option>
-                ))}
-              </select>
+        {mode === 'register' && !simplifiedLogin && (
+          <div style={{ marginTop: 18, paddingTop: 18, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 4 }}>Business profile (optional)</div>
+            <div style={{ fontSize: 11, color: '#7A92B0', marginBottom: 12, lineHeight: 1.45 }}>
+              Save time: add your company name and details here. They are saved when you create your account (if you do not already have a business profile). Edit anytime in Profile.
             </div>
             <div className="field">
-              <label>Type</label>
-              <select defaultValue="B2B" disabled style={{ opacity: 0.7 }}>
-                <option value="B2B">B2B</option>
-              </select>
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
-            <div className="field">
-              <label>City</label>
-              <input placeholder="Dubai" value={bizCity} onChange={(e) => setBizCity(e.target.value)} />
+              <label>Business name</label>
+              <input placeholder="e.g. NexaTech Solutions" value={bizName} onChange={(e) => setBizName(e.target.value)} />
             </div>
             <div className="field">
-              <label>Country</label>
-              <select value={bizCountry} onChange={(e) => setBizCountry(e.target.value)}>
-                <option value="">Select…</option>
-                {COUNTRIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+              <label>Tagline</label>
+              <input placeholder="Short tagline" value={bizTagline} onChange={(e) => setBizTagline(e.target.value)} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
+              <div className="field">
+                <label>Industry</label>
+                <select value={bizInd} onChange={(e) => setBizInd(e.target.value)}>
+                  <option value="">Select…</option>
+                  {INDUSTRIES.map((i) => (
+                    <option key={i} value={i}>
+                      {i}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Type</label>
+                <select defaultValue="B2B" disabled style={{ opacity: 0.7 }}>
+                  <option value="B2B">B2B</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
+              <div className="field">
+                <label>City</label>
+                <input placeholder="Dubai" value={bizCity} onChange={(e) => setBizCity(e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Country</label>
+                <select value={bizCountry} onChange={(e) => setBizCountry(e.target.value)}>
+                  <option value="">Select…</option>
+                  {COUNTRIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="field">
+              <label>Short description</label>
+              <textarea placeholder="What does your business do?" value={bizDesc} onChange={(e) => setBizDesc(e.target.value)} style={{ minHeight: 64 }} />
             </div>
           </div>
-          <div className="field">
-            <label>Short description</label>
-            <textarea placeholder="What does your business do?" value={bizDesc} onChange={(e) => setBizDesc(e.target.value)} style={{ minHeight: 64 }} />
-          </div>
-        </div>
+        )}
 
         {err && <div className="form-err">{err}</div>}
         {resetMsg && (
