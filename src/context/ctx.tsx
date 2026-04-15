@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import { sb, Business, RANDOM_CALL_INVITE_MARKER, CHAT_CALL_INVITE_MARKER } from '../lib/db'
 import { setEmailHasProfile, clearEmailHasProfile } from '../lib/profileLocal'
+import { playNotificationTone, syncAppIconBadge, tryShowNativeNotification } from '../lib/notify'
+import { ensurePushSubscription } from '../lib/push'
 
 type ToastType = 'success' | 'error' | 'info'
 
@@ -103,7 +105,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (row.id) lastChatInviteMsgIdRef.current = row.id
     setPendingChatCallFromBusinessId(row.sender_id)
     setChatWith(row.sender_id)
+    playNotificationTone('call')
     if (navigator.vibrate) navigator.vibrate([220, 120, 220, 120, 220, 120, 220])
+    void tryShowNativeNotification('Incoming Chat Call', 'Open Chat to answer the call.', 'chat-call')
     toast('📞 Incoming Chat call — opening Chat to answer', 'info', 5200)
     setTab('messages')
   }, [myBiz?.id, toast, setTab, setChatWith])
@@ -118,7 +122,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (row.id && lastRandomInviteMsgIdRef.current === row.id) return
     if (row.id) lastRandomInviteMsgIdRef.current = row.id
     setPendingRandomCallFromBusinessId(row.sender_id)
+    playNotificationTone('call')
     if (navigator.vibrate) navigator.vibrate([220, 120, 220, 120, 220, 120, 220])
+    void tryShowNativeNotification('Incoming Random Call', 'Open Random to answer the call.', 'random-call')
     toast('📞 Incoming Random call — tap Random to answer', 'info', 5200)
     setTab('random')
   }, [myBiz?.id, toast, setTab])
@@ -203,6 +209,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const prevUnread = unreadRef.current
       await refreshUnread()
       if (unreadRef.current > prevUnread) {
+        playNotificationTone('message')
+        void tryShowNativeNotification('New message', 'You received a new chat message.', 'chat-message')
         if (navigator.vibrate) navigator.vibrate([120, 60, 120])
         if (tab !== 'messages') toast('New message received 💬', 'info')
       }
@@ -227,6 +235,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         !!oldRow?.text?.includes('is calling you')
 
       if (becameMissed && tab !== 'messages') {
+        playNotificationTone('alert')
+        void tryShowNativeNotification('Missed call', 'A call was missed or ended.', 'missed-call')
         toast('Chat call missed or ended', 'info', 3600)
         if (navigator.vibrate) navigator.vibrate([100, 80, 100])
       }
@@ -244,6 +254,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       sb.removeChannel(ch)
     }
   }, [myBiz?.id, tab, toast, handleRandomInviteRow, handleChatInviteRow])
+
+  useEffect(() => {
+    const total = unread + (pendingRandomCallFromBusinessId ? 1 : 0) + (pendingChatCallFromBusinessId ? 1 : 0)
+    syncAppIconBadge(total)
+  }, [unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId])
 
   // Poll for Chat + Random call invites when Realtime is delayed or the app was in background (mobile Safari).
   useEffect(() => {
@@ -296,6 +311,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', onVis)
     }
   }, [myBiz?.id, handleRandomInviteRow, handleChatInviteRow])
+
+  useEffect(() => {
+    if (!myBiz?.id) return
+    void ensurePushSubscription(myBiz.id)
+  }, [myBiz?.id])
 
   return (
     <AppCtx.Provider value={{

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
+import { useBusinessOnlineMap } from '../lib/presence'
+import { sendPushNotification } from '../lib/push'
 import { useApp } from '../context/ctx'
 
 const normalizeLogoImage = (value?: string | null): string | null => {
@@ -25,6 +27,8 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
   const [incomingCallPeer, setIncomingCallPeer] = useState<Business | null>(null)
   const [videoCallOpen, setVideoCallOpen] = useState(false)
   const callAlertTimerRef = useRef<number | null>(null)
+  const watchOnlineIds = chats.map((c) => c.other_biz?.id || '').filter(Boolean)
+  const onlineById = useBusinessOnlineMap(myBiz?.id, watchOnlineIds)
 
   const loadChats = useCallback(async () => {
     if (!myBiz) return
@@ -186,6 +190,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
       {!loading && chats.length === 0 && <div className="empty"><div className="ico">💬</div><h3>No messages yet</h3><p>Connect with businesses in the Feed to start conversations.</p></div>}
       {chats.map(c => {
         if (!c.other_biz) return null
+        const isOnline = !!onlineById[c.other_biz.id]
         return (
           <div key={c.id} onClick={() => setActiveId(c.id)} style={{ display:'flex', alignItems:'center', gap:11, padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', cursor:'pointer' }}>
             <div className={grad(c.other_biz.id)} style={{ width:46, height:46, borderRadius:13, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, position:'relative', overflow:'hidden' }}>
@@ -193,6 +198,9 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
                 ? <img src={normalizeLogoImage(c.other_biz.logo) || ''} alt={c.other_biz.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
                 : logoInitials(c.other_biz.name)}
               {(c.unread||0) > 0 && <div className="bni-badge">{c.unread}</div>}
+              {isOnline && (
+                <div style={{ position:'absolute', right:2, bottom:2, width:10, height:10, borderRadius:'50%', background:'#00D46A', border:'2px solid #0A1628' }} />
+              )}
             </div>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
@@ -262,6 +270,8 @@ function ChatView({
   }, [chatId, myBiz.id, other?.id])
 
   const displayOther = other ?? fetchedOther
+  const onlineById = useBusinessOnlineMap(myBiz.id, displayOther?.id ? [displayOther.id] : [])
+  const isOtherOnline = !!(displayOther?.id && onlineById[displayOther.id])
 
   const load = useCallback(async () => {
     const { data } = await sb.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending:true })
@@ -299,6 +309,16 @@ function ChatView({
     if (!text || sending) return
     setSending(true); setInput('')
     await sb.from('messages').insert({ chat_id:chatId, sender_id:myId, text })
+    if (displayOther?.id) {
+      await sendPushNotification({
+        recipientBusinessId: displayOther.id,
+        senderBusinessId: myId,
+        title: myBiz.name,
+        body: text.length > 120 ? `${text.slice(0, 117)}...` : text,
+        tag: `chat-msg-${chatId}`,
+        url: '/?tab=messages',
+      })
+    }
     setSending(false)
   }
 
@@ -316,6 +336,14 @@ function ChatView({
       toast('Could not ring the other party: ' + error.message, 'error')
       return
     }
+    await sendPushNotification({
+      recipientBusinessId: displayOther.id,
+      senderBusinessId: myId,
+      title: `${myBiz.name} is calling`,
+      body: 'Incoming video call in Chat.',
+      tag: `chat-call-${chatId}`,
+      url: '/?tab=messages',
+    })
     setVideoCallOpen(true)
   }
 
@@ -394,10 +422,11 @@ function ChatView({
       )}
       <div style={{ display:'flex', alignItems:'center', gap:11, padding:'11px 15px 9px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
         <button onClick={onBack} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:20, cursor:'pointer', padding:'2px 5px', flexShrink:0 }}>←</button>
-        {displayOther && <div className={grad(displayOther.id)} style={{ width:38, height:38, borderRadius:11, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:14, color:'#fff', flexShrink:0, overflow:'hidden' }}>
+        {displayOther && <div className={grad(displayOther.id)} style={{ width:38, height:38, borderRadius:11, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:14, color:'#fff', flexShrink:0, overflow:'hidden', position:'relative' }}>
           {normalizeLogoImage(displayOther.logo)
             ? <img src={normalizeLogoImage(displayOther.logo) || ''} alt={displayOther.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
             : logoInitials(displayOther.name)}
+          {isOtherOnline && <div style={{ position:'absolute', right:1, bottom:1, width:9, height:9, borderRadius:'50%', background:'#00D46A', border:'2px solid #0A1628' }} />}
         </div>}
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{displayOther?.name||'Chat'}</div>

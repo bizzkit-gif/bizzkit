@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
+import { sendPushNotification } from '../lib/push'
 import { useApp } from '../context/ctx'
 
 const GRADS = ['gr1','gr2','gr3','gr4','gr5','gr6','gr7','gr8']
@@ -1260,6 +1261,14 @@ const startRandomCall = async () => {
     sender_id: myBiz.id,
     read: false,
     text: randomCallInviteMessageRinging(myBiz.name)
+  })
+  await sendPushNotification({
+    recipientBusinessId: match.id,
+    senderBusinessId: myBiz.id,
+    title: `${myBiz.name} is calling`,
+    body: 'Incoming video call in Random.',
+    tag: `random-call-${chatId}`,
+    url: '/?tab=random',
   })
   toast(`Calling ${match.name}...`, 'info')
   setActiveCallWith(match)
