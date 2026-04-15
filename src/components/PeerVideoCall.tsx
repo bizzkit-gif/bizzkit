@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { sb, Business } from '../lib/db'
 
 type LiveSignal = {
-  type: 'join' | 'offer' | 'answer' | 'ice'
+  type: 'ready' | 'offer' | 'answer' | 'ice'
   from: string
   to?: string
   bizName?: string
@@ -23,7 +23,9 @@ export type PeerVideoCallProps = {
 }
 
 /**
- * In-app 1:1 video using WebRTC + Supabase broadcast (same signaling model as Go Random).
+ * In-app 1:1 video using WebRTC + Supabase broadcast.
+ * Uses deterministic offerer + periodic "ready" pings so the first offer is not lost
+ * when the other peer joins the Realtime channel later.
  */
 export function PeerVideoCall({
   myBiz,
@@ -45,18 +47,31 @@ export function PeerVideoCall({
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const peerIdRef = useRef<string>(`peer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
   const remoteConnectedRef = useRef(false)
+  const iAmOfferer = myBiz.id.localeCompare(other.id) < 0
+  const pendingIceRef = useRef<RTCIceCandidateInit[]>([])
+  const offerSentRef = useRef(false)
+  const readyIntervalRef = useRef<number | null>(null)
 
   const sub = subtitleLine ?? `${other.industry} · ${other.city}`
   const hint = connectingHint ?? `Connecting… waiting for ${other.name}.`
 
-  const sendSignal = useCallback(
-    (sig: LiveSignal) => {
-      const ch = channelRef.current
-      if (!ch) return
-      ch.send({ type: 'broadcast', event: 'signal', payload: sig })
-    },
-    []
-  )
+  const sendSignal = useCallback((sig: LiveSignal) => {
+    const ch = channelRef.current
+    if (!ch) return
+    ch.send({ type: 'broadcast', event: 'signal', payload: sig })
+  }, [])
+
+  const flushPendingIce = useCallback(async (pc: RTCPeerConnection) => {
+    const q = pendingIceRef.current
+    pendingIceRef.current = []
+    for (const init of q) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(init))
+      } catch {
+        /* ignore invalid / expired */
+      }
+    }
+  }, [])
 
   const createPeer = useCallback(() => {
     if (peerRef.current) return peerRef.current
@@ -76,11 +91,18 @@ export function PeerVideoCall({
       }
     }
     pc.onicecandidate = (e) => {
-      if (e.candidate) sendSignal({ type: 'ice', from: peerIdRef.current, to: '*', payload: e.candidate, bizName: myBiz.name })
+      if (e.candidate) sendSignal({ type: 'ice', from: peerIdRef.current, to: '*', payload: e.candidate.toJSON(), bizName: myBiz.name })
     }
     peerRef.current = pc
     return pc
   }, [myBiz.name, sendSignal])
+
+  const stopReadyPing = useCallback(() => {
+    if (readyIntervalRef.current !== null) {
+      window.clearInterval(readyIntervalRef.current)
+      readyIntervalRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -99,32 +121,70 @@ export function PeerVideoCall({
           .on('broadcast', { event: 'signal' }, async ({ payload }: { payload: LiveSignal }) => {
             const msg = payload
             if (!msg || msg.from === peerIdRef.current) return
-            if (msg.type === 'join') {
-              const pc = createPeer()
-              const offer = await pc.createOffer()
-              await pc.setLocalDescription(offer)
-              sendSignal({ type: 'offer', from: peerIdRef.current, payload: offer, bizName: myBiz.name })
+
+            if (msg.type === 'ready') {
+              if (!iAmOfferer || offerSentRef.current) return
+              void (async () => {
+                try {
+                  const pc = createPeer()
+                  const offer = await pc.createOffer()
+                  await pc.setLocalDescription(offer)
+                  offerSentRef.current = true
+                  sendSignal({ type: 'offer', from: peerIdRef.current, payload: offer, bizName: myBiz.name })
+                  setStarting(false)
+                } catch {
+                  setStarting(false)
+                }
+              })()
+              return
             }
+
+            if (msg.type === 'ice') {
+              const init = msg.payload as RTCIceCandidateInit | undefined
+              if (!init) return
+              const pc = peerRef.current
+              if (!pc || !pc.remoteDescription) {
+                pendingIceRef.current.push(init)
+                return
+              }
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(init))
+              } catch {
+                pendingIceRef.current.push(init)
+              }
+              return
+            }
+
             if (msg.type === 'offer') {
+              if (iAmOfferer) return
               const pc = createPeer()
               await pc.setRemoteDescription(new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit))
+              await flushPendingIce(pc)
               const answer = await pc.createAnswer()
               await pc.setLocalDescription(answer)
               sendSignal({ type: 'answer', from: peerIdRef.current, payload: answer, bizName: myBiz.name })
+              setStarting(false)
+              return
             }
+
             if (msg.type === 'answer') {
+              if (!iAmOfferer) return
               const pc = createPeer()
               await pc.setRemoteDescription(new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit))
-            }
-            if (msg.type === 'ice') {
-              const pc = createPeer()
-              if (msg.payload) await pc.addIceCandidate(new RTCIceCandidate(msg.payload as RTCIceCandidateInit))
+              await flushPendingIce(pc)
             }
           })
           .subscribe((status: string) => {
             if (status === 'SUBSCRIBED') {
-              sendSignal({ type: 'join', from: peerIdRef.current, bizName: myBiz.name })
-              setStarting(false)
+              offerSentRef.current = false
+              pendingIceRef.current = []
+              stopReadyPing()
+              readyIntervalRef.current = window.setInterval(() => {
+                sendSignal({ type: 'ready', from: peerIdRef.current, bizName: myBiz.name })
+              }, 400)
+              if (!iAmOfferer) {
+                setStarting(false)
+              }
             }
           })
         channelRef.current = ch
@@ -135,6 +195,7 @@ export function PeerVideoCall({
     void setup()
     return () => {
       mounted = false
+      stopReadyPing()
       const ch = channelRef.current
       if (ch) sb.removeChannel(ch)
       const pc = peerRef.current
@@ -144,8 +205,15 @@ export function PeerVideoCall({
       channelRef.current = null
       peerRef.current = null
       localStreamRef.current = null
+      pendingIceRef.current = []
+      offerSentRef.current = false
     }
-  }, [createPeer, myBiz.name, signalingChannelId, sendSignal])
+  }, [createPeer, flushPendingIce, iAmOfferer, myBiz.name, signalingChannelId, sendSignal, stopReadyPing])
+
+  useEffect(() => {
+    if (!remoteStream) return
+    stopReadyPing()
+  }, [remoteStream, stopReadyPing])
 
   useEffect(() => {
     if (remoteStream) remoteConnectedRef.current = true

@@ -39,6 +39,10 @@ export function displayChatMessageText(text: string | null | undefined): string 
     const rest = t.slice(RANDOM_CALL_INVITE_MARKER.length).trim()
     return rest || t
   }
+  if (t.startsWith('[CONF_SESSION_INVITE]:')) {
+    const rest = t.replace(/^\[CONF_SESSION_INVITE\]:[^\s]+\s+/, '')
+    return rest.trim() || t
+  }
   return t
 }
 
@@ -61,23 +65,37 @@ export async function markLatestRandomCallInviteAsMissed(bizA: string, bizB: str
   await sb.from('messages').update({ text: randomCallInviteMessageMissed(name) }).eq('id', row.id)
 }
 
+export type MarkMissedResult = { ok: true } | { ok: false; error: string }
+
 /** Rewrite latest ringing Chat call invite to missed (caller ended before connect). */
-export async function markLatestChatCallInviteAsMissed(bizA: string, bizB: string): Promise<void> {
-  const { data: chatId } = await sb.rpc('get_or_create_chat', { biz_a: bizA, biz_b: bizB })
-  if (!chatId) return
-  const { data: rows } = await sb
+export async function markLatestChatCallInviteAsMissed(bizA: string, bizB: string): Promise<MarkMissedResult> {
+  const { data: chatId, error: rpcErr } = await sb.rpc('get_or_create_chat', { biz_a: bizA, biz_b: bizB })
+  if (rpcErr || !chatId) {
+    return { ok: false, error: rpcErr?.message || 'Could not open chat' }
+  }
+  const { data: rows, error: selErr } = await sb
     .from('messages')
     .select('id,sender_id,text')
     .eq('chat_id', chatId)
     .ilike('text', `%${CHAT_CALL_INVITE_MARKER}%`)
     .order('created_at', { ascending: false })
     .limit(1)
+  if (selErr) return { ok: false, error: selErr.message }
   const row = rows?.[0]
-  if (!row?.text) return
-  if (!row.text.includes('is calling you')) return
+  if (!row?.text) return { ok: false, error: 'No call invite line found' }
+  if (!row.text.includes('is calling you')) return { ok: false, error: 'Latest invite is not ringing' }
   const { data: caller } = await sb.from('businesses').select('name').eq('id', row.sender_id).single()
   const name = (caller?.name || 'Someone').trim() || 'Someone'
-  await sb.from('messages').update({ text: chatCallInviteMessageMissed(name) }).eq('id', row.id)
+  const { data: updated, error: updErr } = await sb
+    .from('messages')
+    .update({ text: chatCallInviteMessageMissed(name) })
+    .eq('id', row.id)
+    .select('id')
+  if (updErr) return { ok: false, error: updErr.message }
+  if (!updated?.length) {
+    return { ok: false, error: 'Could not update invite (check permissions)' }
+  }
+  return { ok: true }
 }
 
 let lastUploadError = ''
@@ -136,6 +154,14 @@ export type Conference = {
   date: string; time: string; industry: string; location: string
   max_attendees: number; status: string; created_at: string
   conference_attendees?: { business_id: string }[]
+}
+
+/** Prefix for Connect → conference session invites sent via DM (dedupe by id in message). */
+export const CONFERENCE_SESSION_INVITE_MARKER = '[CONF_SESSION_INVITE]'
+
+export function conferenceSessionInviteMessage(inviterName: string, conf: Conference): string {
+  const head = `${CONFERENCE_SESSION_INVITE_MARKER}:${conf.id}`
+  return `${head} ${inviterName} invited you to join "${conf.title}" on ${fmtDate(conf.date)} at ${conf.time}. Open Connect → Conferences to find and join this session.`
 }
 
 export type Chat = {

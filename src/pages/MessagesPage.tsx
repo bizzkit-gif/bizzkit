@@ -18,10 +18,13 @@ const normalizeLogoImage = (value?: string | null): string | null => {
 const logoInitials = (name?: string) => (name || '').split(' ').slice(0,2).map(w => w[0] || '').join('').toUpperCase() || 'BK'
 
 export default function MessagesPage({ openWith, onClearOpen }: { openWith?: string|null; onClearOpen?: () => void }) {
-  const { myBiz, setUnread, toast } = useApp()
+  const { myBiz, setUnread, toast, pendingChatCallFromBusinessId, clearPendingChatCall } = useApp()
   const [chats, setChats] = useState<Chat[]>([])
   const [activeId, setActiveId] = useState<string|null>(null)
   const [loading, setLoading] = useState(true)
+  const [incomingCallPeer, setIncomingCallPeer] = useState<Business | null>(null)
+  const [videoCallOpen, setVideoCallOpen] = useState(false)
+  const callAlertTimerRef = useRef<number | null>(null)
 
   const loadChats = useCallback(async () => {
     if (!myBiz) return
@@ -51,15 +54,130 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
     }
   }, [openWith, myBiz?.id])
 
+  useEffect(() => {
+    if (!myBiz || !pendingChatCallFromBusinessId) return
+    let cancelled = false
+    const sid = pendingChatCallFromBusinessId
+    void (async () => {
+      const known = chats.find((c) => c.other_biz?.id === sid)?.other_biz ?? null
+      if (known) {
+        if (!cancelled) {
+          setIncomingCallPeer(known)
+          clearPendingChatCall()
+        }
+        return
+      }
+      const { data } = await sb.from('businesses').select('*').eq('id', sid).single()
+      if (!cancelled && data) {
+        setIncomingCallPeer(data as Business)
+        clearPendingChatCall()
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [myBiz?.id, pendingChatCallFromBusinessId, chats, clearPendingChatCall])
+
+  useEffect(() => {
+    if (!incomingCallPeer) {
+      if (callAlertTimerRef.current) {
+        window.clearInterval(callAlertTimerRef.current)
+        callAlertTimerRef.current = null
+      }
+      return
+    }
+    if (callAlertTimerRef.current) window.clearInterval(callAlertTimerRef.current)
+    callAlertTimerRef.current = window.setInterval(() => {
+      if (navigator.vibrate) navigator.vibrate(120)
+    }, 1800)
+    return () => {
+      if (callAlertTimerRef.current) {
+        window.clearInterval(callAlertTimerRef.current)
+        callAlertTimerRef.current = null
+      }
+    }
+  }, [incomingCallPeer])
+
   if (!myBiz) return <div className="empty"><div className="ico">💬</div><h3>Your Messages</h3><p>Create a business profile to start messaging.</p></div>
 
   if (activeId) {
     const chat = chats.find(c => c.id === activeId)
-    return <ChatView chatId={activeId} other={chat?.other_biz||null} myBiz={myBiz} myId={myBiz.id} onBack={() => { setActiveId(null); loadChats() }} toast={toast} />
+    return (
+      <ChatView
+        chatId={activeId}
+        other={chat?.other_biz || null}
+        myBiz={myBiz}
+        myId={myBiz.id}
+        onBack={() => {
+          setActiveId(null)
+          setVideoCallOpen(false)
+          loadChats()
+        }}
+        toast={toast}
+        incomingCallPeer={incomingCallPeer}
+        onClearIncomingCall={() => setIncomingCallPeer(null)}
+        videoCallOpen={videoCallOpen}
+        setVideoCallOpen={setVideoCallOpen}
+      />
+    )
   }
 
   return (
-    <div style={{ paddingBottom:16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      {incomingCallPeer && (
+        <div style={{ margin: '0 12px 8px', flexShrink: 0, background: 'rgba(30,126,247,0.15)', border: '1px solid rgba(30,126,247,0.45)', borderRadius: 12, padding: '10px 11px' }}>
+          <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>📞 Incoming Call</div>
+          <div style={{ fontSize: 11, color: '#7A92B0', marginBottom: 8 }}>{incomingCallPeer.name} is calling you in Chat.</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn-green btn-sm"
+              style={{ flex: 1 }}
+              onClick={() => {
+                void (async () => {
+                  const { data: chatId } = await sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: incomingCallPeer.id })
+                  if (chatId) {
+                    setActiveId(chatId)
+                    setVideoCallOpen(true)
+                    setIncomingCallPeer(null)
+                    if (callAlertTimerRef.current) {
+                      window.clearInterval(callAlertTimerRef.current)
+                      callAlertTimerRef.current = null
+                    }
+                    loadChats()
+                  }
+                })()
+              }}
+            >
+              Accept
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ flex: 1 }}
+              onClick={() => {
+                void (async () => {
+                  const r = await markLatestChatCallInviteAsMissed(myBiz.id, incomingCallPeer.id)
+                  if (!r.ok) {
+                    toast(r.error, 'error')
+                    return
+                  }
+                  toast('Call marked as missed', 'info')
+                  setIncomingCallPeer(null)
+                  if (callAlertTimerRef.current) {
+                    window.clearInterval(callAlertTimerRef.current)
+                    callAlertTimerRef.current = null
+                  }
+                  loadChats()
+                })()
+              }}
+            >
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingBottom: 16 }}>
       <div className="topbar">
         <div className="page-title">Messages</div>
         <div style={{ fontSize:12, color:'#7A92B0' }}>{chats.length} conversation{chats.length!==1?'s':''}</div>
@@ -88,17 +206,62 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
           </div>
         )
       })}
+      </div>
     </div>
   )
 }
 
-function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: string; other: Business | null; myBiz: Business; myId: string; onBack: () => void; toast: (msg: string, type?: 'success' | 'error' | 'info') => void }) {
-  const { pendingChatCallFromBusinessId, clearPendingChatCall } = useApp()
+function ChatView({
+  chatId,
+  other,
+  myBiz,
+  myId,
+  onBack,
+  toast,
+  incomingCallPeer,
+  onClearIncomingCall,
+  videoCallOpen,
+  setVideoCallOpen,
+}: {
+  chatId: string
+  other: Business | null
+  myBiz: Business
+  myId: string
+  onBack: () => void
+  toast: (msg: string, type?: 'success' | 'error' | 'info') => void
+  incomingCallPeer: Business | null
+  onClearIncomingCall: () => void
+  videoCallOpen: boolean
+  setVideoCallOpen: (v: boolean) => void
+}) {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [inCall, setInCall] = useState(false)
+  const [fetchedOther, setFetchedOther] = useState<Business | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setFetchedOther(null)
+  }, [chatId])
+
+  useEffect(() => {
+    if (other || !chatId || !myBiz) return
+    let cancelled = false
+    void (async () => {
+      const { data: row } = await sb.from('chats').select('participant_a,participant_b').eq('id', chatId).single()
+      if (cancelled || !row) return
+      const ra = row.participant_a as string
+      const rb = row.participant_b as string
+      const oid = ra === myBiz.id ? rb : ra
+      const { data: b } = await sb.from('businesses').select('*').eq('id', oid).single()
+      if (!cancelled && b) setFetchedOther(b as Business)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [chatId, myBiz.id, other?.id])
+
+  const displayOther = other ?? fetchedOther
 
   const load = useCallback(async () => {
     const { data } = await sb.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending:true })
@@ -110,18 +273,22 @@ function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: strin
   useEffect(() => { bottom.current?.scrollIntoView({ behavior:'smooth' }) }, [msgs])
 
   useEffect(() => {
-    if (!other || !pendingChatCallFromBusinessId) return
-    if (other.id !== pendingChatCallFromBusinessId) return
-    setInCall(true)
-    clearPendingChatCall()
-  }, [other?.id, pendingChatCallFromBusinessId, clearPendingChatCall])
-
-  useEffect(() => {
     const ch = sb.channel('chat-' + chatId)
       .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages', filter:'chat_id=eq.'+chatId },
         payload => {
           setMsgs(p => [...p, payload.new as Msg])
           if ((payload.new as Msg).sender_id !== myId) sb.from('messages').update({ read:true }).eq('id', payload.new.id)
+        })
+      .on('postgres_changes', { event:'UPDATE', schema:'public', table:'messages', filter:'chat_id=eq.'+chatId },
+        payload => {
+          const next = payload.new as Msg
+          setMsgs((p) => {
+            const i = p.findIndex((m) => m.id === next.id)
+            if (i === -1) return p
+            const copy = [...p]
+            copy[i] = next
+            return copy
+          })
         })
       .subscribe()
     return () => { sb.removeChannel(ch) }
@@ -136,7 +303,7 @@ function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: strin
   }
 
   const startCall = async () => {
-    if (!other) {
+    if (!displayOther) {
       toast('Could not start call', 'error')
       return
     }
@@ -149,8 +316,11 @@ function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: strin
       toast('Could not ring the other party: ' + error.message, 'error')
       return
     }
-    setInCall(true)
+    setVideoCallOpen(true)
   }
+
+  const showIncomingBanner =
+    !!incomingCallPeer && !videoCallOpen && !!displayOther && displayOther.id === incomingCallPeer.id
 
   const QUICK = ["👋 Hello!", "Let's connect", "Request a quote?", "Schedule a call?"]
 
@@ -162,35 +332,76 @@ function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: strin
     else grouped.push({ date:d, msgs:[m] })
   })
 
-  if (inCall && other) {
+  if (videoCallOpen && displayOther) {
     const signalingChannelId = `msgvc-${chatId.replace(/-/g, '')}`
     return (
       <div className="call-wrap" style={{ background: '#0A1628' }}>
         <PeerVideoCall
           myBiz={myBiz}
-          other={other}
+          other={displayOther}
           signalingChannelId={signalingChannelId}
-          onEnd={() => setInCall(false)}
-          onEndWithoutRemote={() => markLatestChatCallInviteAsMissed(myId, other.id)}
+          onEnd={() => setVideoCallOpen(false)}
+          onEndWithoutRemote={async () => {
+            const r = await markLatestChatCallInviteAsMissed(myId, displayOther.id)
+            if (!r.ok) toast(r.error, 'error')
+          }}
           headerEmoji="📞"
-          connectingHint={`Connecting… waiting for ${other.name} to join.`}
+          connectingHint={`Connecting… waiting for ${displayOther.name} to join.`}
         />
       </div>
     )
   }
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
+    <div style={{ display:'flex', flexDirection:'column', height:'100%', minHeight:0 }}>
+      {showIncomingBanner && (
+        <div style={{ margin: '0 12px 8px', flexShrink: 0, background: 'rgba(30,126,247,0.15)', border: '1px solid rgba(30,126,247,0.45)', borderRadius: 12, padding: '10px 11px' }}>
+          <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>📞 Incoming Call</div>
+          <div style={{ fontSize: 11, color: '#7A92B0', marginBottom: 8 }}>{incomingCallPeer.name} is calling you in Chat.</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn-green btn-sm"
+              style={{ flex: 1 }}
+              onClick={() => {
+                setVideoCallOpen(true)
+                onClearIncomingCall()
+              }}
+            >
+              Accept
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ flex: 1 }}
+              onClick={() => {
+                void (async () => {
+                  const r = await markLatestChatCallInviteAsMissed(myBiz.id, incomingCallPeer.id)
+                  if (!r.ok) {
+                    toast(r.error, 'error')
+                    return
+                  }
+                  toast('Call marked as missed', 'info')
+                  onClearIncomingCall()
+                  await load()
+                })()
+              }}
+            >
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
       <div style={{ display:'flex', alignItems:'center', gap:11, padding:'11px 15px 9px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
         <button onClick={onBack} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:20, cursor:'pointer', padding:'2px 5px', flexShrink:0 }}>←</button>
-        {other && <div className={grad(other.id)} style={{ width:38, height:38, borderRadius:11, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:14, color:'#fff', flexShrink:0, overflow:'hidden' }}>
-          {normalizeLogoImage(other.logo)
-            ? <img src={normalizeLogoImage(other.logo) || ''} alt={other.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
-            : logoInitials(other.name)}
+        {displayOther && <div className={grad(displayOther.id)} style={{ width:38, height:38, borderRadius:11, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:14, color:'#fff', flexShrink:0, overflow:'hidden' }}>
+          {normalizeLogoImage(displayOther.logo)
+            ? <img src={normalizeLogoImage(displayOther.logo) || ''} alt={displayOther.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+            : logoInitials(displayOther.name)}
         </div>}
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{other?.name||'Chat'}</div>
-          <div style={{ fontSize:10.5, color:'#7A92B0' }}>{other?.industry} · {other?.city}</div>
+          <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{displayOther?.name||'Chat'}</div>
+          <div style={{ fontSize:10.5, color:'#7A92B0' }}>{displayOther?.industry} · {displayOther?.city}</div>
         </div>
         <div className="icon-btn" style={{ width:34, height:34, fontSize:14 }} onClick={startCall}>📞</div>
       </div>
@@ -206,10 +417,10 @@ function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: strin
               const mine = m.sender_id === myId
               return (
                 <div key={m.id} style={{ display:'flex', flexDirection:mine?'row-reverse':'row', alignItems:'flex-end', gap:5, marginBottom:4 }}>
-                  {!mine && other && i === 0 && <div className={grad(other.id)} style={{ width:26, height:26, borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#fff', flexShrink:0, overflow:'hidden' }}>
-                    {normalizeLogoImage(other.logo)
-                      ? <img src={normalizeLogoImage(other.logo) || ''} alt={other.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
-                      : logoInitials(other.name)}
+                  {!mine && displayOther && i === 0 && <div className={grad(displayOther.id)} style={{ width:26, height:26, borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#fff', flexShrink:0, overflow:'hidden' }}>
+                    {normalizeLogoImage(displayOther.logo)
+                      ? <img src={normalizeLogoImage(displayOther.logo) || ''} alt={displayOther.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+                      : logoInitials(displayOther.name)}
                   </div>}
                   {!mine && i > 0 && <div style={{ width:26, flexShrink:0 }} />}
                   <div style={{ maxWidth:'72%' }}>

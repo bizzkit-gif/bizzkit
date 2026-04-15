@@ -43,7 +43,7 @@ export default function App() {
   return (
     <div className="shell">
       <div className="screen-area">
-        <div className={`screen${tab === 'random' ? ' screen-fit' : ''}`} key={tab+(viewId||'')}>{screen()}</div>
+        <div className={`screen${tab === 'random' || tab === 'messages' ? ' screen-fit' : ''}`} key={tab+(viewId||'')}>{screen()}</div>
       </div>
       <nav className="bnav">
         {NAV.map(n => (

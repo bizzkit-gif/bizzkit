@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed } from '../lib/db'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useApp } from '../context/ctx'
 
@@ -492,6 +492,10 @@ const [confs, setConfs] = useState<Conference[]>([])
 const [loading, setLoading] = useState(true)
 const [view, setView] = useState<'list'|'book'|'create'>('list')
 const [liveConf, setLiveConf] = useState<Conference|null>(null)
+const [connections, setConnections] = useState<Business[]>([])
+const [inviteModalConf, setInviteModalConf] = useState<Conference | null>(null)
+const [sendingInviteTo, setSendingInviteTo] = useState<string | null>(null)
+const [inviteAllBusy, setInviteAllBusy] = useState(false)
 
 const load = useCallback(async () => {
 const { data } = await sb.from('conferences').select('*,conference_attendees(business_id)').order('date', { ascending:true })
@@ -500,6 +504,40 @@ setLoading(false)
 }, [])
 
 useEffect(() => { load() }, [load])
+
+useEffect(() => {
+  if (!myBiz?.id) {
+    setConnections([])
+    return
+  }
+  let cancelled = false
+  void (async () => {
+    const { data: connRows, error } = await sb
+      .from('connections')
+      .select('from_biz_id,to_biz_id')
+      .or(`from_biz_id.eq.${myBiz.id},to_biz_id.eq.${myBiz.id}`)
+    if (cancelled || error || !connRows?.length) {
+      if (!cancelled) setConnections([])
+      return
+    }
+    const ids = Array.from(
+      new Set(
+        connRows
+          .map((c) => (c.from_biz_id === myBiz.id ? c.to_biz_id : c.from_biz_id))
+          .filter((id: string) => id && id !== myBiz.id)
+      )
+    )
+    if (!ids.length) {
+      if (!cancelled) setConnections([])
+      return
+    }
+    const { data: connBiz } = await sb.from('businesses').select('*').in('id', ids)
+    if (!cancelled) setConnections(connBiz || [])
+  })()
+  return () => {
+    cancelled = true
+  }
+}, [myBiz?.id])
 
 useEffect(() => {
 const ch = sb.channel('conf-updates').on('postgres_changes', { event:'*', schema:'public', table:'conference_attendees' }, load).subscribe()
@@ -532,6 +570,30 @@ const openLive = (c: Conference) => {
 const ensureChat = async (a: string, b: string) => {
   const { data } = await sb.rpc('get_or_create_chat', { biz_a:a, biz_b:b })
   return data as string | null
+}
+
+const inviteableForModal =
+  inviteModalConf && myBiz
+    ? connections.filter((b) => {
+        const att = new Set((inviteModalConf.conference_attendees || []).map((a: { business_id: string }) => a.business_id))
+        return b.id !== myBiz.id && !att.has(b.id)
+      })
+    : []
+
+const sendSessionInviteToConnection = async (conf: Conference, targetBizId: string) => {
+  if (!myBiz) return { ok: false as const, error: 'No profile' }
+  const markerFragment = `[CONF_SESSION_INVITE]:${conf.id}`
+  const chatId = await ensureChat(myBiz.id, targetBizId)
+  if (!chatId) return { ok: false as const, error: 'Could not open chat' }
+  const { count } = await sb.from('messages').select('id', { count: 'exact', head: true }).eq('chat_id', chatId).ilike('text', `%${markerFragment}%`)
+  if ((count || 0) > 0) return { ok: false as const, error: 'already_sent' }
+  const { error } = await sb.from('messages').insert({
+    chat_id: chatId,
+    sender_id: myBiz.id,
+    text: conferenceSessionInviteMessage(myBiz.name, conf),
+  })
+  if (error) return { ok: false as const, error: error.message }
+  return { ok: true as const }
 }
 
 const sendConferenceNotice = async (c: Conference, kind: 'MISSED'|'REMINDER') => {
@@ -597,17 +659,111 @@ return (
 {loading && <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>}
 {!loading && myConfs.length > 0 && (
 <><div className="sec-hd"><h3>My Sessions</h3></div>
-{myConfs.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined onLeave={() => leave(c)} onGoLive={() => openLive(c)} onClose={() => closeConference(c)} />)}
+{myConfs.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined onLeave={() => leave(c)} onGoLive={() => openLive(c)} onClose={() => closeConference(c)} onInviteConnections={() => setInviteModalConf(c)} />)}
 <div style={{ height:8 }} /></>
 )}
 <div className="sec-hd"><h3>Available Sessions</h3><span className="see-all">{avail.length} open</span></div>
 {!loading && avail.length === 0 && <div className="empty"><div className="ico">📅</div><h3>No sessions right now</h3>{myBiz && <button className="btn btn-accent btn-sm" style={{ marginTop:14 }} onClick={() => setView('create')}>+ Create one</button>}</div>}
 {avail.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined={false} onJoin={() => join(c)} onGoLive={() => openLive(c)} onClose={() => closeConference(c)} />)}
+
+{inviteModalConf && myBiz && (
+<div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.72)', zIndex:600, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={() => setInviteModalConf(null)} role="presentation">
+  <div style={{ background:'#152236', borderRadius:16, border:'1px solid rgba(255,255,255,0.08)', maxWidth:380, width:'100%', maxHeight:'78vh', overflow:'hidden', display:'flex', flexDirection:'column' }} onClick={(e) => e.stopPropagation()}>
+    <div style={{ padding:'14px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+      <div>
+        <div style={{ fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15 }}>Invite connections</div>
+        <div style={{ fontSize:11, color:'#7A92B0', marginTop:4, lineHeight:1.35 }}>Send a chat message to your connected businesses with a link to this session.</div>
+      </div>
+      <button type="button" onClick={() => setInviteModalConf(null)} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:22, cursor:'pointer', lineHeight:1, flexShrink:0 }} aria-label="Close">×</button>
+    </div>
+    <div style={{ fontSize:12, fontWeight:700, padding:'0 16px 10px', color:'#fff' }}>{inviteModalConf.title}</div>
+    <div style={{ fontSize:10.5, color:'#7A92B0', padding:'0 16px 12px' }}>{fmtDate(inviteModalConf.date)} · {inviteModalConf.time}</div>
+    <div style={{ flex:1, overflowY:'auto', padding:'0 16px 16px', minHeight:0 }}>
+      {inviteableForModal.length === 0 ? (
+        <div style={{ textAlign:'center', padding:'22px 8px', color:'#7A92B0', fontSize:13, lineHeight:1.5 }}>
+          {connections.length === 0 ? 'No connections yet. Connect with businesses in the Feed, then invite them here.' : 'Everyone you are connected with is already in this session.'}
+        </div>
+      ) : (
+        <>
+          {inviteableForModal.map((b) => (
+            <div key={b.id} style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, padding:'11px 0', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
+              <div style={{ minWidth:0 }}>
+                <div style={{ fontWeight:700, fontSize:13 }}>{b.name}</div>
+                <div style={{ fontSize:10, color:'#7A92B0' }}>{b.industry} · {b.city}</div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-blue btn-sm"
+                style={{ flexShrink:0 }}
+                disabled={sendingInviteTo === b.id}
+                onClick={() => {
+                  void (async () => {
+                    if (!inviteModalConf) return
+                    setSendingInviteTo(b.id)
+                    const r = await sendSessionInviteToConnection(inviteModalConf, b.id)
+                    setSendingInviteTo(null)
+                    if (r.ok) toast('Invite sent to ' + b.name, 'success')
+                    else if (r.error === 'already_sent') toast('Already invited ' + b.name, 'info')
+                    else toast(r.error, 'error')
+                  })()
+                }}
+              >
+                {sendingInviteTo === b.id ? '…' : 'Send'}
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="btn btn-ghost btn-full btn-sm"
+            style={{ marginTop:14 }}
+            disabled={inviteAllBusy}
+            onClick={() => {
+              void (async () => {
+                if (!inviteModalConf || inviteableForModal.length === 0) return
+                setInviteAllBusy(true)
+                let sent = 0
+                let dup = 0
+                for (const b of inviteableForModal) {
+                  const r = await sendSessionInviteToConnection(inviteModalConf, b.id)
+                  if (r.ok) sent++
+                  else if (r.error === 'already_sent') dup++
+                }
+                setInviteAllBusy(false)
+                toast(sent ? `Sent ${sent} invite${sent === 1 ? '' : 's'}` + (dup ? ` (${dup} already invited)` : '') : dup ? 'Everyone was already invited' : 'No invites sent', 'info')
+              })()
+            }}
+          >
+            {inviteAllBusy ? 'Sending…' : `Invite all (${inviteableForModal.length})`}
+          </button>
+        </>
+      )}
+    </div>
+  </div>
+</div>
+)}
 </div>
 )
 }
 
-function ConfCard({ c, myBizId, joined, onJoin, onLeave, onGoLive, onClose }: any) {
+function ConfCard({
+  c,
+  myBizId,
+  joined,
+  onJoin,
+  onLeave,
+  onGoLive,
+  onClose,
+  onInviteConnections,
+}: {
+  c: Conference
+  myBizId?: string | null
+  joined: boolean
+  onJoin?: () => void
+  onLeave?: () => void
+  onGoLive: () => void
+  onClose: () => void
+  onInviteConnections?: () => void
+}) {
 const atts = c.conference_attendees||[]
 const spots = c.max_attendees - atts.length
 const pct = (atts.length/c.max_attendees)*100
@@ -642,6 +798,11 @@ return (
 <div className="prog-wrap"><div className="prog-fill" style={{ width:pct+'%', background:pct>80?'#FF6B35':'#00D4A0' }} /></div>
 </div>
 </div>
+{!closed && joined && onInviteConnections && (
+<div style={{ padding:'0 13px 10px' }}>
+<button type="button" className="btn btn-accent btn-full btn-sm" onClick={onInviteConnections}>Invite connections</button>
+</div>
+)}
 <div style={{ padding:'0 13px 12px', display:'flex', gap:7 }}>
 {!closed && !joined && !isMine && <button className="btn btn-blue btn-full btn-sm" onClick={onJoin}>Join - {spots} spots left</button>}
 {!closed && joined && !isMine && <><button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onLeave}>Leave</button><button className="btn btn-blue btn-sm" style={{ flex:2 }} onClick={onGoLive}>Go Live</button></>}

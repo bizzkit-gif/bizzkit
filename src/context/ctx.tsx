@@ -184,10 +184,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    /** Missed calls rewrite the same row (UPDATE). INSERT handlers never run for that. */
+    const onMessageUpdate = async (payload: { new: Record<string, unknown>; old?: Record<string, unknown> }) => {
+      const row = payload.new as { id?: string; chat_id?: string; sender_id?: string; text?: string | null }
+      const oldRow = payload.old as { text?: string | null } | undefined
+      if (!row?.chat_id || !row.text) {
+        await refreshUnread()
+        return
+      }
+      const { data: chat } = await sb.from('chats').select('participant_a,participant_b').eq('id', row.chat_id).single()
+      if (!chat) return
+      const isParticipant = chat.participant_a === myBiz.id || chat.participant_b === myBiz.id
+      if (!isParticipant) return
+
+      const becameMissed =
+        row.text.includes(CHAT_CALL_INVITE_MARKER) &&
+        row.text.includes('Missed call') &&
+        !!oldRow?.text?.includes('is calling you')
+
+      if (becameMissed && tab !== 'messages') {
+        toast('Chat call missed or ended', 'info', 3600)
+        if (navigator.vibrate) navigator.vibrate([100, 80, 100])
+      }
+      await refreshUnread()
+    }
+
     refreshUnread()
     const ch = sb.channel('global-unread-' + myBiz.id)
       .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages' }, onMessageInsert)
-      .on('postgres_changes', { event:'UPDATE', schema:'public', table:'messages' }, refreshUnread)
+      .on('postgres_changes', { event:'UPDATE', schema:'public', table:'messages' }, onMessageUpdate)
       .subscribe()
 
     return () => {
