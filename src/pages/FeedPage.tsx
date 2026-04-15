@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { sb, Business, INDUSTRIES, grad } from '../lib/db'
+import { sb, Business, INDUSTRIES, grad, fmtDate } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 const normalizeLogoImage = (value?: string | null): string | null => {
@@ -25,11 +25,19 @@ const cleanDisplayText = (value?: string | null): string => {
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
-  const [feedView, setFeedView] = useState<'discover'|'connected'>('discover')
+  const [feedView, setFeedView] = useState<'feed'|'explore'|'connected'>('feed')
   const [filter, setFilter] = useState('All')
   const [search, setSearch] = useState('')
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [conns, setConns] = useState<Set<string>>(new Set())
+  const [connectionPosts, setConnectionPosts] = useState<Array<{
+    id: string
+    business_id: string
+    content: string
+    media_url: string | null
+    media_type: string | null
+    created_at: string
+  }>>([])
   const [loading, setLoading] = useState(true)
   /** Same source as bottom-nav Chat badge: updates on Realtime (includes Random call invite messages). */
   const bellBadgeCount = Math.max(unread, pendingRandomCallFromBusinessId ? 1 : 0)
@@ -71,6 +79,23 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     return () => { active = false }
   }, [myBiz?.id, user?.id])
 
+  const connKey = Array.from(conns).sort().join(',')
+
+  useEffect(() => {
+    if (!myBiz) {
+      setConnectionPosts([])
+      return
+    }
+    const fromConns = connKey ? connKey.split(',').filter(Boolean) : []
+    const ids = Array.from(new Set([myBiz.id, ...fromConns]))
+    sb.from('posts')
+      .select('id,business_id,content,media_url,media_type,created_at')
+      .in('business_id', ids)
+      .order('created_at', { ascending: false })
+      .limit(80)
+      .then(({ data }) => setConnectionPosts((data as typeof connectionPosts) || []))
+  }, [connKey, myBiz?.id])
+
   const openNotifications = () => {
     if (unread > 0) {
       toast(`You have ${unread} unread message${unread > 1 ? 's' : ''}`, 'info')
@@ -87,7 +112,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
   const discoverBase = list.filter(b => !conns.has(b.id))
   const connectedBase = list.filter(b => conns.has(b.id))
-  const source = feedView === 'connected' ? connectedBase : discoverBase
+  const source = feedView === 'connected' ? connectedBase : feedView === 'explore' ? discoverBase : []
 
   const items = source.filter(b => {
     const mf = filter === 'All' || b.industry === filter
@@ -100,6 +125,17 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     const ms = !search || b.name.toLowerCase().includes(search.toLowerCase())
     return mf && ms && b.trust_score >= 70
   }).slice(0, 4)
+
+  const bizById = new Map<string, Business>(list.map(b => [b.id, b] as const))
+  if (myBiz) bizById.set(myBiz.id, myBiz)
+  const connectionFeedPosts = connectionPosts.filter(p => {
+    const b = bizById.get(p.business_id)
+    if (!b) return true
+    const industryOk = filter === 'All' || b.industry === filter
+    const searchLower = search.toLowerCase()
+    const textMatch = !search || (p.content || '').toLowerCase().includes(searchLower) || b.name.toLowerCase().includes(searchLower)
+    return industryOk && textMatch
+  })
 
   const doSave = async (b: Business) => {
     if (!user) { toast('Sign in to save', 'info'); return }
@@ -141,28 +177,40 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
       <div className="search-wrap">
         <span style={{ fontSize:15, color:'#7A92B0' }}>🔍</span>
-        <input placeholder={feedView==='connected'?'Search connected businesses…':'Search businesses…'} value={search} onChange={e => setSearch(e.target.value)} />
+        <input
+          placeholder={
+            feedView === 'feed' ? 'Search posts…' :
+            feedView === 'connected' ? 'Search connected businesses…' :
+            'Search businesses…'
+          }
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
         {search && <span style={{ cursor:'pointer', color:'#7A92B0', fontSize:18 }} onClick={() => setSearch('')}>×</span>}
       </div>
 
-      <div style={{ margin:'0 16px 12px', display:'flex', background:'#152236', borderRadius:12, padding:4, border:'1px solid rgba(255,255,255,0.07)' }}>
+      <div style={{ margin:'0 16px 12px', display:'flex', background:'#152236', borderRadius:12, padding:4, border:'1px solid rgba(255,255,255,0.07)', gap:2 }}>
         {([
-          { id:'discover', label:'Feed' },
-          { id:'connected', label:'Connected Businesses' }
-        ] as const).map(v => (
+          { id:'feed' as const, label:'Feed' },
+          { id:'explore' as const, label:'Explore' },
+          { id:'connected' as const, label:'Connected' }
+        ]).map(v => (
           <button
             key={v.id}
+            type="button"
+            title={v.id === 'explore' ? 'Explore businesses' : v.id === 'connected' ? 'Connected businesses' : 'Your feed'}
             onClick={() => setFeedView(v.id)}
             style={{
               flex:1,
               border:'none',
               borderRadius:9,
-              padding:'8px 10px',
+              padding:'8px 6px',
               cursor:'pointer',
               background:feedView===v.id?'#1E7EF7':'transparent',
               color:feedView===v.id?'#fff':'#7A92B0',
-              fontSize:11.5,
-              fontWeight:700
+              fontSize:10.5,
+              fontWeight:700,
+              lineHeight:1.2
             }}
           >
             {v.label}
@@ -180,7 +228,57 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>
       ) : (
         <>
-          {!search && feedView === 'discover' && trending.length > 0 && (
+          {feedView === 'feed' && myBiz && (
+            <>
+              <div className="sec-hd"><h3>Your posts & connections</h3><span className="see-all">{connectionFeedPosts.length} posts</span></div>
+              {connectionFeedPosts.length === 0 ? (
+                <div style={{ margin:'0 16px 14px', padding:'16px', background:'#152236', borderRadius:14, border:'1px solid rgba(255,255,255,0.07)', fontSize:12.5, color:'#7A92B0', textAlign:'center' }}>
+                  No posts yet. Share from your profile (Posts tab), and posts from businesses you connect with will appear here too.
+                </div>
+              ) : (
+                <div style={{ padding:'0 16px', marginBottom:14 }}>
+                  {connectionFeedPosts.map(p => {
+                    const b = bizById.get(p.business_id)
+                    const isOwn = p.business_id === myBiz.id
+                    const bizName = b ? cleanDisplayText(b.name) || 'Business' : 'Business'
+                    const logoSrc = b ? (normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)) : null
+                    return (
+                      <div key={p.id} style={{ background:'#152236', borderRadius:14, padding:13, border:`1px solid ${isOwn ? 'rgba(30,126,247,0.35)' : 'rgba(255,255,255,0.07)'}`, marginBottom:10 }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:8 }}>
+                          <div className={grad(p.business_id)} onClick={() => onView(p.business_id)} style={{ width:36, height:36, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:12, color:'#fff', flexShrink:0, cursor:'pointer', overflow:'hidden' }}>
+                            {logoSrc ? <img src={logoSrc} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' as const }} /> : logoInitials(bizName)}
+                          </div>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                              <div style={{ fontFamily:'Syne, sans-serif', fontSize:13, fontWeight:700, cursor:'pointer' }} onClick={() => onView(p.business_id)}>{bizName}</div>
+                              {isOwn && <span style={{ fontSize:9, fontWeight:800, background:'#1E7EF7', color:'#fff', padding:'2px 6px', borderRadius:5 }}>You</span>}
+                            </div>
+                            <div style={{ fontSize:10, color:'#7A92B0' }}>{fmtDate(p.created_at)}</div>
+                          </div>
+                        </div>
+                        {p.content ? <p style={{ fontSize:13, color:'#fff', lineHeight:1.55, margin:0 }}>{p.content}</p> : null}
+                        {p.media_url && (p.media_type === 'video' ? (
+                          <video src={p.media_url} controls style={{ width:'100%', borderRadius:10, maxHeight:240, marginTop:10, objectFit:'cover' as const }} />
+                        ) : (
+                          <img src={p.media_url} alt="" style={{ width:'100%', borderRadius:10, maxHeight:240, marginTop:10, objectFit:'cover' as const }} />
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {feedView === 'feed' && !myBiz && (
+            <div className="empty" style={{ marginTop:8 }}>
+              <div className="ico">📝</div>
+              <h3>Create your profile</h3>
+              <p>Add a business profile to see your feed and posts from connections.</p>
+            </div>
+          )}
+
+          {!search && feedView === 'explore' && trending.length > 0 && (
             <>
               <div className="sec-hd"><h3>Trending</h3><span className="see-all">See all</span></div>
               <div style={{ display:'flex', gap:11, padding:'0 16px 4px', overflowX:'auto' }}>
@@ -208,8 +306,10 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
             </>
           )}
 
+          {(feedView === 'explore' || feedView === 'connected') && (
+            <>
           <div className="sec-hd">
-            <h3>{search ? `"${search}"` : feedView === 'connected' ? 'Connected Businesses' : 'All Businesses'}</h3>
+            <h3>{search ? `"${search}"` : feedView === 'connected' ? 'Connected Businesses' : 'Explore businesses'}</h3>
             <span className="see-all">{items.length} found</span>
           </div>
 
@@ -217,7 +317,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
             <div className="empty">
               <div className="ico">{feedView === 'connected' ? '🤝' : '🔍'}</div>
               <h3>{feedView === 'connected' ? 'No connected businesses yet' : 'No businesses found'}</h3>
-              <p>{feedView === 'connected' ? 'Connect with businesses from the Feed tab.' : 'Try a different search'}</p>
+              <p>{feedView === 'connected' ? 'Connect with businesses from Explore.' : 'Try a different search or filter'}</p>
             </div>
           )}
 
@@ -262,7 +362,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                   <button onClick={() => toast('RFQ sent to ' + b.name, 'info')} style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:4, fontSize:11, fontWeight:600, color:'#7A92B0', background:'none', border:'none', flex:1, padding:5, borderRadius:7, cursor:'pointer' }}>
                     📋 RFQ
                   </button>
-                  {feedView === 'discover' && (
+                  {feedView === 'explore' && (
                     <button onClick={() => doConnect(b)} className={`btn btn-sm ${isConn?'btn-ghost':'btn-blue'}`} style={{ flexShrink:0 }}>
                       {isConn ? '✓ Connected' : 'Connect'}
                     </button>
@@ -271,6 +371,8 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
               </div>
             )
           })}
+            </>
+          )}
         </>
       )}
       <div style={{ height:8 }} />

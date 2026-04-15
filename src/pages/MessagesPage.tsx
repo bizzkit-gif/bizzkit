@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText } from '../lib/db'
+import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useApp } from '../context/ctx'
 
 const normalizeLogoImage = (value?: string | null): string | null => {
@@ -54,7 +55,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
 
   if (activeId) {
     const chat = chats.find(c => c.id === activeId)
-    return <ChatView chatId={activeId} other={chat?.other_biz||null} myId={myBiz.id} onBack={() => { setActiveId(null); loadChats() }} toast={toast} />
+    return <ChatView chatId={activeId} other={chat?.other_biz||null} myBiz={myBiz} myId={myBiz.id} onBack={() => { setActiveId(null); loadChats() }} toast={toast} />
   }
 
   return (
@@ -91,11 +92,11 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
   )
 }
 
-function ChatView({ chatId, other, myId, onBack, toast }: { chatId:string; other:Business|null; myId:string; onBack:()=>void; toast:any }) {
+function ChatView({ chatId, other, myBiz, myId, onBack, toast }: { chatId: string; other: Business | null; myBiz: Business; myId: string; onBack: () => void; toast: (msg: string, type?: 'success' | 'error' | 'info') => void }) {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
-  const [callUrl, setCallUrl] = useState<string|null>(null)
+  const [inCall, setInCall] = useState(false)
   const bottom = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
@@ -126,11 +127,12 @@ function ChatView({ chatId, other, myId, onBack, toast }: { chatId:string; other
     setSending(false)
   }
 
-  const startCall = async () => {
-    // Use Jitsi Meet - free, no API key needed
-    const roomName = 'bizzkit-' + chatId.replace(/-/g,'').slice(0,12)
-    const url = 'https://meet.jit.si/' + roomName
-    setCallUrl(url)
+  const startCall = () => {
+    if (!other) {
+      toast('Could not start call', 'error')
+      return
+    }
+    setInCall(true)
   }
 
   const QUICK = ["👋 Hello!", "Let's connect", "Request a quote?", "Schedule a call?"]
@@ -143,16 +145,17 @@ function ChatView({ chatId, other, myId, onBack, toast }: { chatId:string; other
     else grouped.push({ date:d, msgs:[m] })
   })
 
-  if (callUrl) {
+  if (inCall && other) {
+    const signalingChannelId = `msgvc-${chatId.replace(/-/g, '')}`
     return (
-      <div className="call-wrap">
-        <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px', background:'#0F1F38', borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
-          <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700 }}>📞 Call with {other?.name}</div>
-        </div>
-        <iframe src={callUrl} allow="camera; microphone; fullscreen; speaker; display-capture" title="Video Call" />
-        <div className="call-footer">
-          <button className="call-btn call-end" onClick={() => setCallUrl(null)}>📵</button>
-        </div>
+      <div className="call-wrap" style={{ background: '#0A1628' }}>
+        <PeerVideoCall
+          myBiz={myBiz}
+          other={other}
+          signalingChannelId={signalingChannelId}
+          onEnd={() => setInCall(false)}
+          headerEmoji="📞"
+        />
       </div>
     )
   }
