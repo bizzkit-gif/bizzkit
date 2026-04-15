@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { sb, Business } from '../lib/db'
+import { iAmWebRtcOfferer, sanitizeRealtimeChannelId } from '../lib/webrtc'
 
 type LiveSignal = {
   type: 'ready' | 'offer' | 'answer' | 'ice' | 'hangup'
@@ -62,6 +63,7 @@ export function PeerVideoCall({
   const [camOn, setCamOn] = useState(true)
   const [starting, setStarting] = useState(true)
   const [mediaError, setMediaError] = useState<string | null>(null)
+  const [signalingError, setSignalingError] = useState<string | null>(null)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
@@ -70,11 +72,13 @@ export function PeerVideoCall({
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const peerIdRef = useRef<string>(`peer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
   const remoteConnectedRef = useRef(false)
-  const iAmOfferer = myBiz.id.localeCompare(other.id) < 0
+  /** Must match on both peers — localeCompare() varies by device locale and breaks the offer/answer handshake. */
+  const iAmOfferer = useMemo(() => iAmWebRtcOfferer(myBiz.id, other.id), [myBiz.id, other.id])
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([])
   const offerSentRef = useRef(false)
   const readyIntervalRef = useRef<number | null>(null)
   const hangupHandledRef = useRef(false)
+  const iceRestartAttemptedRef = useRef(false)
 
   const sub = subtitleLine ?? `${other.industry} · ${other.city}`
   const hint = connectingHint ?? `Connecting… waiting for ${other.name}.`
@@ -128,6 +132,16 @@ export function PeerVideoCall({
     pc.onicecandidate = (e) => {
       if (e.candidate) sendSignal({ type: 'ice', from: peerIdRef.current, to: '*', payload: e.candidate.toJSON(), bizName: myBiz.name })
     }
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' && !iceRestartAttemptedRef.current) {
+        iceRestartAttemptedRef.current = true
+        try {
+          pc.restartIce()
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     peerRef.current = pc
     return pc
   }, [myBiz.name, sendSignal])
@@ -165,6 +179,7 @@ export function PeerVideoCall({
     const setup = async () => {
       try {
         setMediaError(null)
+        setSignalingError(null)
         let local: MediaStream
         try {
           local = await navigator.mediaDevices.getUserMedia({
@@ -185,8 +200,9 @@ export function PeerVideoCall({
         localStreamRef.current = local
         setLocalStreamVersion((v) => v + 1)
 
+        const safeChannelId = sanitizeRealtimeChannelId(signalingChannelId)
         const ch = sb
-          .channel(signalingChannelId)
+          .channel(safeChannelId)
           .on('broadcast', { event: 'signal' }, async ({ payload }: { payload: LiveSignal }) => {
             const msg = payload
             if (!msg || msg.from === peerIdRef.current) return
@@ -248,15 +264,28 @@ export function PeerVideoCall({
               await flushPendingIce(pc)
             }
           })
-          .subscribe((status: string) => {
+          .subscribe((status: string, err?: Error) => {
             if (status === 'SUBSCRIBED') {
               offerSentRef.current = false
               pendingIceRef.current = []
+              iceRestartAttemptedRef.current = false
               stopReadyPing()
               readyIntervalRef.current = window.setInterval(() => {
                 sendSignal({ type: 'ready', from: peerIdRef.current, bizName: myBiz.name })
               }, 400)
               if (!iAmOfferer) {
+                setStarting(false)
+              }
+              return
+            }
+            if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              if (mounted) {
+                setSignalingError(
+                  err?.message ||
+                    (status === 'TIMED_OUT'
+                      ? 'Call signaling timed out. Check your connection.'
+                      : 'Could not connect call signaling. Try again.')
+                )
                 setStarting(false)
               }
             }
@@ -349,7 +378,12 @@ export function PeerVideoCall({
             {mediaError}
           </div>
         )}
-        {starting && !mediaError && (
+        {signalingError && (
+          <div style={{ fontSize: 11, color: '#FF8A7A', flexShrink: 0, lineHeight: 1.4, padding: '6px 8px', background: 'rgba(255,80,80,0.08)', borderRadius: 8 }}>
+            {signalingError}
+          </div>
+        )}
+        {starting && !mediaError && !signalingError && (
           <div style={{ fontSize: 10.5, color: '#7A92B0', flexShrink: 0, lineHeight: 1.35 }}>{hint}</div>
         )}
         <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateRows: '1fr 1fr', gap: 7 }}>
