@@ -4,7 +4,57 @@ import { createClient } from '@supabase/supabase-js'
 const SUPABASE_URL = 'https://ganberetmowmaidioryu.supabase.co'
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhbmJlcmV0bW93bWFpZGlvcnl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTg5MzksImV4cCI6MjA4OTQ3NDkzOX0.5-mD0cFberNXOmSh8F0lItV6wbTJE0zHjCiPFAYfExE'
 
-export const sb = createClient(SUPABASE_URL, SUPABASE_KEY)
+const AUTH_STORAGE_MODE_KEY = 'bizzkit.auth.storageMode'
+
+export type AuthStorageMode = 'local' | 'session'
+
+/** Call before signIn / signUp so the session is stored in localStorage (keep logged in) or sessionStorage (this browser session only). */
+export function setAuthStorageMode(mode: AuthStorageMode): void {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(AUTH_STORAGE_MODE_KEY, mode)
+}
+
+function getAuthStorageMode(): AuthStorageMode {
+  if (typeof window === 'undefined') return 'local'
+  const m = localStorage.getItem(AUTH_STORAGE_MODE_KEY)
+  return m === 'session' ? 'session' : 'local'
+}
+
+/** Supabase auth persistence: mirrors default behaviour with a switchable backing store. */
+const authStorageAdapter: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = {
+  getItem(key: string): string | null {
+    if (typeof window === 'undefined') return null
+    const mode = getAuthStorageMode()
+    if (mode === 'session') {
+      return sessionStorage.getItem(key)
+    }
+    return localStorage.getItem(key) ?? sessionStorage.getItem(key)
+  },
+  setItem(key: string, value: string): void {
+    if (typeof window === 'undefined') return
+    const mode = getAuthStorageMode()
+    if (mode === 'session') {
+      sessionStorage.setItem(key, value)
+      localStorage.removeItem(key)
+    } else {
+      localStorage.setItem(key, value)
+      sessionStorage.removeItem(key)
+    }
+  },
+  removeItem(key: string): void {
+    if (typeof window === 'undefined') return
+    localStorage.removeItem(key)
+    sessionStorage.removeItem(key)
+  },
+}
+
+export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    storage: authStorageAdapter as Storage,
+    persistSession: true,
+    autoRefreshToken: true,
+  },
+})
 
 /** Prefix in chat messages used to signal an incoming Random video call invite. */
 export const RANDOM_CALL_INVITE_MARKER = '[RANDOM_CALL_INVITE]'

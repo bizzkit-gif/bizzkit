@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { sb, uploadImage, getLastUploadError, INDUSTRIES, COUNTRIES, getLogo, grad } from '../lib/db'
+import { sb, uploadImage, getLastUploadError, INDUSTRIES, COUNTRIES, getLogo, grad, setAuthStorageMode } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 type QuickBizFields = {
@@ -61,6 +61,7 @@ export default function AuthPage() {
   const [bizCity, setBizCity] = useState('')
   const [bizCountry, setBizCountry] = useState('')
   const [bizDesc, setBizDesc] = useState('')
+  const [keepLoggedIn, setKeepLoggedIn] = useState(true)
 
   const quickBiz = (): QuickBizFields => ({
     name: bizName,
@@ -149,6 +150,7 @@ export default function AuthPage() {
     setLoading(true)
     try {
       if (mode === 'login') {
+        setAuthStorageMode(keepLoggedIn ? 'local' : 'session')
         const { data, error } = await sb.auth.signInWithPassword({ email, password: pw })
         if (error) {
           setErr(error.message)
@@ -164,6 +166,7 @@ export default function AuthPage() {
           }
         }
       } else {
+        setAuthStorageMode(keepLoggedIn ? 'local' : 'session')
         const { data, error } = await sb.auth.signUp({
           email,
           password: pw,
@@ -280,13 +283,22 @@ export default function AuthPage() {
           <label>Password</label>
           <input type="password" placeholder={mode === 'register' ? 'Min. 6 characters' : '••••••••'} value={pw} onChange={(e) => setPw(e.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
         </div>
-        {mode === 'login' && (
-          <div style={{ marginTop: -4, marginBottom: 12, textAlign: 'right' }}>
-            <button type="button" onClick={sendReset} disabled={sendingReset} style={{ background: 'none', border: 'none', color: '#4D9DFF', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: -2, marginBottom: mode === 'login' ? 10 : 12, flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, color: '#C8D4E8', fontWeight: 600, userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={keepLoggedIn}
+              onChange={(e) => setKeepLoggedIn(e.target.checked)}
+              style={{ width: 16, height: 16, accentColor: '#1E7EF7', cursor: 'pointer' }}
+            />
+            Keep me logged in
+          </label>
+          {mode === 'login' && (
+            <button type="button" onClick={sendReset} disabled={sendingReset} style={{ background: 'none', border: 'none', color: '#4D9DFF', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0, marginLeft: 'auto' }}>
               {sendingReset ? 'Sending reset link...' : 'Forgot your password?'}
             </button>
-          </div>
-        )}
+          )}
+        </div>
         {mode === 'register' && (
           <div className="field">
             <label>Confirm Password</label>
