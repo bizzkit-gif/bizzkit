@@ -42,7 +42,9 @@ export function PeerVideoCall({
   const [camOn, setCamOn] = useState(true)
   const [starting, setStarting] = useState(true)
   const localVideoRef = useRef<HTMLVideoElement | null>(null)
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
+  const [localStreamVersion, setLocalStreamVersion] = useState(0)
   const channelRef = useRef<ReturnType<typeof sb.channel> | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const peerIdRef = useRef<string>(`peer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
@@ -84,11 +86,24 @@ export function PeerVideoCall({
     const local = localStreamRef.current
     if (local) local.getTracks().forEach((track) => pc.addTrack(track, local))
     pc.ontrack = (e) => {
-      const stream = e.streams?.[0]
-      if (stream) {
+      // Safari / some WebKit builds omit e.streams[0] even when the track is valid — build a stream from the track.
+      const incoming = e.streams[0] ?? new MediaStream([e.track])
+      setRemoteStream((prev) => {
+        if (!prev) {
+          remoteConnectedRef.current = true
+          return incoming
+        }
+        const next = new MediaStream()
+        const seen = new Set<string>()
+        for (const t of [...prev.getTracks(), ...incoming.getTracks()]) {
+          if (!seen.has(t.id)) {
+            seen.add(t.id)
+            next.addTrack(t)
+          }
+        }
         remoteConnectedRef.current = true
-        setRemoteStream(stream)
-      }
+        return next
+      })
     }
     pc.onicecandidate = (e) => {
       if (e.candidate) sendSignal({ type: 'ice', from: peerIdRef.current, to: '*', payload: e.candidate.toJSON(), bizName: myBiz.name })
@@ -114,7 +129,7 @@ export function PeerVideoCall({
           return
         }
         localStreamRef.current = local
-        if (localVideoRef.current) localVideoRef.current.srcObject = local
+        setLocalStreamVersion((v) => v + 1)
 
         const ch = sb
           .channel(signalingChannelId)
@@ -127,7 +142,7 @@ export function PeerVideoCall({
               void (async () => {
                 try {
                   const pc = createPeer()
-                  const offer = await pc.createOffer()
+                  const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
                   await pc.setLocalDescription(offer)
                   offerSentRef.current = true
                   sendSignal({ type: 'offer', from: peerIdRef.current, payload: offer, bizName: myBiz.name })
@@ -160,7 +175,7 @@ export function PeerVideoCall({
               const pc = createPeer()
               await pc.setRemoteDescription(new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit))
               await flushPendingIce(pc)
-              const answer = await pc.createAnswer()
+              const answer = await pc.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
               await pc.setLocalDescription(answer)
               sendSignal({ type: 'answer', from: peerIdRef.current, payload: answer, bizName: myBiz.name })
               setStarting(false)
@@ -209,6 +224,23 @@ export function PeerVideoCall({
       offerSentRef.current = false
     }
   }, [createPeer, flushPendingIce, iAmOfferer, myBiz.name, signalingChannelId, sendSignal, stopReadyPing])
+
+  /** Attach local stream after ref is mounted (fixes blank self-view on some mobile WebKit builds). */
+  useEffect(() => {
+    const el = localVideoRef.current
+    const s = localStreamRef.current
+    if (!el || !s) return
+    el.srcObject = s
+    void el.play().catch(() => {})
+  }, [localStreamVersion])
+
+  /** Keep remote video element in sync with MediaStream (callback refs miss some updates). */
+  useEffect(() => {
+    const el = remoteVideoRef.current
+    if (!el) return
+    el.srcObject = remoteStream
+    if (remoteStream) void el.play().catch(() => {})
+  }, [remoteStream])
 
   useEffect(() => {
     if (!remoteStream) return
@@ -268,12 +300,11 @@ export function PeerVideoCall({
           <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#152236', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, overflow: 'hidden' }}>
             {remoteStream ? (
               <video
+                ref={remoteVideoRef}
                 autoPlay
                 playsInline
+                muted={false}
                 style={{ flex: 1, minHeight: 0, width: '100%', objectFit: 'cover', display: 'block' }}
-                ref={(el) => {
-                  if (el && el.srcObject !== remoteStream) el.srcObject = remoteStream
-                }}
               />
             ) : (
               <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7A92B0', fontSize: 11, textAlign: 'center', padding: '0 8px' }}>Waiting for {other.name}…</div>
