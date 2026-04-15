@@ -1,5 +1,6 @@
 import React from 'react'
 import { useApp } from './context/ctx'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import AuthPage from './pages/AuthPage'
 import FeedPage from './pages/FeedPage'
 import MessagesPage from './pages/MessagesPage'
@@ -43,7 +44,9 @@ export default function App() {
   return (
     <div className="shell">
       <div className="screen-area">
-        <div className={`screen${tab === 'random' || tab === 'messages' ? ' screen-fit' : ''}`} key={tab+(viewId||'')}>{screen()}</div>
+        <ErrorBoundary key={tab + (viewId || '')}>
+          <div className={`screen${tab === 'random' || tab === 'messages' ? ' screen-fit' : ''}`}>{screen()}</div>
+        </ErrorBoundary>
       </div>
       <nav className="bnav">
         {NAV.map(n => (

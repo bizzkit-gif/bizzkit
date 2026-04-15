@@ -10,9 +10,30 @@ function getAudioContext(): AudioContext | null {
   return audioCtx
 }
 
-function tone(freq: number, duration = 0.08, delay = 0): void {
+/**
+ * Browsers (especially iOS Safari) start AudioContext suspended until a user gesture.
+ * Call this once after tap/click so message/call tones can play later.
+ */
+export function primeNotificationAudio(): void {
   const ctx = getAudioContext()
   if (!ctx) return
+  void ctx.resume().catch(() => {})
+}
+
+async function ensureAudioRunning(): Promise<AudioContext | null> {
+  const ctx = getAudioContext()
+  if (!ctx || ctx.state === 'closed') return null
+  if (ctx.state === 'suspended') {
+    try {
+      await ctx.resume()
+    } catch {
+      /* ignore — may need user gesture first */
+    }
+  }
+  return ctx
+}
+
+function tone(ctx: AudioContext, freq: number, duration = 0.08, delay = 0, peak = 0.1): void {
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
   osc.type = 'sine'
@@ -21,31 +42,37 @@ function tone(freq: number, duration = 0.08, delay = 0): void {
   osc.connect(gain)
   gain.connect(ctx.destination)
   const t0 = ctx.currentTime + delay
-  gain.gain.exponentialRampToValueAtTime(0.08, t0 + 0.01)
+  gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.01)
   gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration)
   osc.start(t0)
   osc.stop(t0 + duration + 0.01)
 }
 
-export function playNotificationTone(kind: ToneKind): void {
-  try {
-    if (kind === 'message') {
-      tone(880, 0.06, 0)
-      tone(1175, 0.08, 0.08)
-      return
-    }
-    if (kind === 'alert') {
-      tone(740, 0.08, 0)
-      tone(587, 0.1, 0.12)
-      return
-    }
-    // call ring
-    tone(1046, 0.1, 0)
-    tone(1318, 0.12, 0.14)
-    tone(1046, 0.1, 0.32)
-  } catch {
-    // no-op
+async function playTones(kind: ToneKind): Promise<void> {
+  const ctx = await ensureAudioRunning()
+  if (!ctx || ctx.state === 'closed') return
+  if (kind === 'message') {
+    tone(ctx, 880, 0.06, 0, 0.1)
+    tone(ctx, 1175, 0.08, 0.08, 0.1)
+    return
   }
+  if (kind === 'alert') {
+    tone(ctx, 740, 0.08, 0, 0.1)
+    tone(ctx, 587, 0.1, 0.12, 0.1)
+    return
+  }
+  // call ring — slightly louder triple beep
+  tone(ctx, 1046, 0.1, 0, 0.12)
+  tone(ctx, 1318, 0.12, 0.14, 0.12)
+  tone(ctx, 1046, 0.1, 0.32, 0.12)
+}
+
+/**
+ * Plays a short in-app tone for new messages / calls. Uses Web Audio (no asset files).
+ * On iOS, audio unlocks after the user has interacted with the page once (`primeNotificationAudio`).
+ */
+export function playNotificationTone(kind: ToneKind): void {
+  void playTones(kind).catch(() => {})
 }
 
 export function syncAppIconBadge(count: number): void {
@@ -82,4 +109,3 @@ export async function tryShowNativeNotification(title: string, body: string, tag
     // no-op
   }
 }
-

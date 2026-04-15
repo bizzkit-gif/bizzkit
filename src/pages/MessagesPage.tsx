@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useBusinessOnlineMap } from '../lib/presence'
@@ -19,15 +19,82 @@ const normalizeLogoImage = (value?: string | null): string | null => {
 
 const logoInitials = (name?: string) => (name || '').split(' ').slice(0,2).map(w => w[0] || '').join('').toUpperCase() || 'BK'
 
+function isValidChatMsg(m: unknown): m is Msg {
+  if (!m || typeof m !== 'object') return false
+  const o = m as Record<string, unknown>
+  return typeof o.id === 'string' && typeof o.sender_id === 'string'
+}
+
+function normalizeMsgs(rows: Msg[] | null | undefined): Msg[] {
+  return (rows || []).filter(isValidChatMsg)
+}
+
 export default function MessagesPage({ openWith, onClearOpen }: { openWith?: string|null; onClearOpen?: () => void }) {
   const { myBiz, setUnread, toast, pendingChatCallFromBusinessId, clearPendingChatCall } = useApp()
   const [chats, setChats] = useState<Chat[]>([])
   const [activeId, setActiveId] = useState<string|null>(null)
+  /** When user picks a thread while `openWith` RPC is still resolving, do not overwrite their choice. */
+  const skipNextRpcAutoOpen = useRef(false)
+  const openWithRef = useRef<string | null | undefined>(openWith)
+  openWithRef.current = openWith
   const [loading, setLoading] = useState(true)
   const [incomingCallPeer, setIncomingCallPeer] = useState<Business | null>(null)
   const [videoCallOpen, setVideoCallOpen] = useState(false)
   const callAlertTimerRef = useRef<number | null>(null)
-  const watchOnlineIds = chats.map((c) => c.other_biz?.id || '').filter(Boolean)
+  /** Resolved peer id when opening a thread before `chats` has `other_biz` (single presence subscription — see ChatView). */
+  const [activePeerId, setActivePeerId] = useState<string | null>(null)
+  /** When ChatView loads `fetchedOther` before parent has that id in `chats` / `activePeerId`. */
+  const [peerOverrideId, setPeerOverrideId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!myBiz?.id) {
+      setActivePeerId(null)
+      return
+    }
+    if (!activeId) {
+      setActivePeerId(null)
+      return
+    }
+    const fromChat = chats.find((c) => c.id === activeId)?.other_biz?.id
+    if (fromChat) {
+      setActivePeerId(fromChat)
+      return
+    }
+    setActivePeerId(null)
+    let cancelled = false
+    void sb
+      .from('chats')
+      .select('participant_a,participant_b')
+      .eq('id', activeId)
+      .single()
+      .then(({ data: row }) => {
+        if (cancelled || !row) return
+        const oid = row.participant_a === myBiz.id ? row.participant_b : row.participant_a
+        setActivePeerId(oid)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeId, myBiz?.id, chats])
+
+  useEffect(() => {
+    if (!activeId) setPeerOverrideId(null)
+  }, [activeId])
+
+  const onDisplayOtherResolved = useCallback((id: string) => {
+    setPeerOverrideId(id)
+  }, [])
+
+  const watchOnlineIds = useMemo(() => {
+    const s = new Set<string>()
+    for (const c of chats) {
+      if (c.other_biz?.id) s.add(c.other_biz.id)
+    }
+    if (activePeerId) s.add(activePeerId)
+    if (peerOverrideId) s.add(peerOverrideId)
+    return Array.from(s)
+  }, [chats, activePeerId, peerOverrideId])
+
   const onlineById = useBusinessOnlineMap(myBiz?.id, watchOnlineIds)
 
   const loadChats = useCallback(async () => {
@@ -41,7 +108,9 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
       const { count } = await sb.from('messages').select('*', { count:'exact', head:true }).eq('chat_id', c.id).neq('sender_id', myBiz.id).eq('read', false)
       return { ...c, other_biz: other, last_msg: msgs?.[0]?.text, last_ts: msgs?.[0]?.created_at, unread: count||0 }
     }))
-    enriched.sort((a, b) => (b.last_ts||b.created_at).localeCompare(a.last_ts||a.created_at))
+    enriched.sort((a, b) =>
+      String(b.last_ts || b.created_at || '').localeCompare(String(a.last_ts || a.created_at || ''))
+    )
     setChats(enriched)
     setUnread(enriched.reduce((s, c) => s + (c.unread||0), 0))
     setLoading(false)
@@ -50,12 +119,22 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
   useEffect(() => { loadChats() }, [loadChats])
 
   useEffect(() => {
-    if (openWith && myBiz) {
-      sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: openWith }).then(({ data }) => {
-        if (data) { setActiveId(data); loadChats() }
+    if (!openWith || !myBiz) return
+    void sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: openWith }).then(({ data }) => {
+      if (skipNextRpcAutoOpen.current) {
+        skipNextRpcAutoOpen.current = false
         onClearOpen?.()
-      })
-    }
+        void loadChats()
+        return
+      }
+      if (data) {
+        setActiveId(data)
+        void loadChats()
+      }
+      onClearOpen?.()
+    }).catch(() => {
+      onClearOpen?.()
+    })
   }, [openWith, myBiz?.id])
 
   useEffect(() => {
@@ -105,13 +184,17 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
   if (!myBiz) return <div className="empty"><div className="ico">💬</div><h3>Your Messages</h3><p>Create a business profile to start messaging.</p></div>
 
   if (activeId) {
-    const chat = chats.find(c => c.id === activeId)
+    const chat = chats.find((c) => c.id === activeId)
+    const peerIdForPresence = chat?.other_biz?.id ?? activePeerId ?? peerOverrideId
+    const isOtherOnline = !!(peerIdForPresence && onlineById[peerIdForPresence])
     return (
       <ChatView
         chatId={activeId}
         other={chat?.other_biz || null}
         myBiz={myBiz}
         myId={myBiz.id}
+        isOtherOnline={isOtherOnline}
+        onDisplayOtherResolved={onDisplayOtherResolved}
         onBack={() => {
           setActiveId(null)
           setVideoCallOpen(false)
@@ -127,7 +210,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0, width: '100%', overflow: 'hidden' }}>
       {incomingCallPeer && (
         <div style={{ margin: '0 12px 8px', flexShrink: 0, background: 'rgba(30,126,247,0.15)', border: '1px solid rgba(30,126,247,0.45)', borderRadius: 12, padding: '10px 11px' }}>
           <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>📞 Incoming Call</div>
@@ -192,19 +275,26 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
         if (!c.other_biz) return null
         const isOnline = !!onlineById[c.other_biz.id]
         return (
-          <div key={c.id} onClick={() => setActiveId(c.id)} style={{ display:'flex', alignItems:'center', gap:11, padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', cursor:'pointer' }}>
+          <div
+            key={c.id}
+            onClick={() => {
+              if (openWithRef.current) skipNextRpcAutoOpen.current = true
+              setActiveId(c.id)
+            }}
+            style={{ display:'flex', alignItems:'center', gap:11, padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', cursor:'pointer' }}
+          >
             <div className={grad(c.other_biz.id)} style={{ width:46, height:46, borderRadius:13, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, position:'relative', overflow:'hidden' }}>
               {normalizeLogoImage(c.other_biz.logo)
                 ? <img src={normalizeLogoImage(c.other_biz.logo) || ''} alt={c.other_biz.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
                 : logoInitials(c.other_biz.name)}
               {(c.unread||0) > 0 && <div className="bni-badge">{c.unread}</div>}
-              {isOnline && (
-                <div style={{ position:'absolute', right:2, bottom:2, width:10, height:10, borderRadius:'50%', background:'#00D46A', border:'2px solid #0A1628' }} />
-              )}
             </div>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
-                <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700 }}>{c.other_biz.name}</div>
+                <div style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
+                  <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.other_biz.name}</div>
+                  {isOnline && <div style={{ width:8, height:8, borderRadius:'50%', background:'#00D46A', flexShrink:0 }} />}
+                </div>
                 {c.last_ts && <div style={{ fontSize:10, color:'#7A92B0', flexShrink:0, marginLeft:8 }}>{timeAgo(c.last_ts)}</div>}
               </div>
               <div style={{ fontSize:10.5, color:'#3A5070', marginTop:1 }}>{c.other_biz.industry} · {c.other_biz.city}</div>
@@ -224,6 +314,8 @@ function ChatView({
   other,
   myBiz,
   myId,
+  isOtherOnline,
+  onDisplayOtherResolved,
   onBack,
   toast,
   incomingCallPeer,
@@ -235,6 +327,10 @@ function ChatView({
   other: Business | null
   myBiz: Business
   myId: string
+  /** From parent’s single Realtime Presence subscription (avoid duplicate channel subscribe). */
+  isOtherOnline: boolean
+  /** Lets parent add peer id to presence watch list when `other` was loaded here. */
+  onDisplayOtherResolved?: (businessId: string) => void
   onBack: () => void
   toast: (msg: string, type?: 'success' | 'error' | 'info') => void
   incomingCallPeer: Business | null
@@ -270,28 +366,47 @@ function ChatView({
   }, [chatId, myBiz.id, other?.id])
 
   const displayOther = other ?? fetchedOther
-  const onlineById = useBusinessOnlineMap(myBiz.id, displayOther?.id ? [displayOther.id] : [])
-  const isOtherOnline = !!(displayOther?.id && onlineById[displayOther.id])
+
+  useEffect(() => {
+    const id = displayOther?.id
+    if (id) onDisplayOtherResolved?.(id)
+  }, [displayOther?.id, onDisplayOtherResolved])
 
   const load = useCallback(async () => {
     const { data } = await sb.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending:true })
-    setMsgs(data||[])
+    setMsgs(normalizeMsgs(data as Msg[] | null))
     await sb.from('messages').update({ read:true }).eq('chat_id', chatId).neq('sender_id', myId).eq('read', false)
   }, [chatId, myId])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { bottom.current?.scrollIntoView({ behavior:'smooth' }) }, [msgs])
+  useEffect(() => {
+    try {
+      bottom.current?.scrollIntoView({ behavior:'smooth' })
+    } catch {
+      /* Safari can throw if layout not ready */
+    }
+  }, [msgs])
 
   useEffect(() => {
     const ch = sb.channel('chat-' + chatId)
       .on('postgres_changes', { event:'INSERT', schema:'public', table:'messages', filter:'chat_id=eq.'+chatId },
-        payload => {
-          setMsgs(p => [...p, payload.new as Msg])
-          if ((payload.new as Msg).sender_id !== myId) sb.from('messages').update({ read:true }).eq('id', payload.new.id)
+        (payload) => {
+          const row = payload.new as Record<string, unknown> | null | undefined
+          if (!row || typeof row !== 'object' || typeof row.id !== 'string') return
+          const next = row as unknown as Msg
+          setMsgs((p) => {
+            if (p.some((m) => m.id === next.id)) return p
+            return [...p, next]
+          })
+          if (next.sender_id !== myId && typeof row.id === 'string') {
+            void sb.from('messages').update({ read:true }).eq('id', row.id)
+          }
         })
       .on('postgres_changes', { event:'UPDATE', schema:'public', table:'messages', filter:'chat_id=eq.'+chatId },
-        payload => {
-          const next = payload.new as Msg
+        (payload) => {
+          const row = payload.new as Record<string, unknown> | null | undefined
+          if (!row || typeof row !== 'object' || typeof row.id !== 'string') return
+          const next = row as unknown as Msg
           setMsgs((p) => {
             const i = p.findIndex((m) => m.id === next.id)
             if (i === -1) return p
@@ -353,17 +468,17 @@ function ChatView({
   const QUICK = ["👋 Hello!", "Let's connect", "Request a quote?", "Schedule a call?"]
 
   const grouped: { date:string; msgs:Msg[] }[] = []
-  msgs.forEach(m => {
-    const d = new Date(m.created_at).toDateString()
-    const last = grouped[grouped.length-1]
+  normalizeMsgs(msgs).forEach((m) => {
+    const d = new Date(m.created_at || 0).toDateString()
+    const last = grouped[grouped.length - 1]
     if (last && last.date === d) last.msgs.push(m)
-    else grouped.push({ date:d, msgs:[m] })
+    else grouped.push({ date: d, msgs: [m] })
   })
 
   if (videoCallOpen && displayOther) {
     const signalingChannelId = `msgvc-${chatId.replace(/-/g, '')}`
     return (
-      <div className="call-wrap" style={{ background: '#0A1628' }}>
+      <div className="call-wrap" style={{ background: '#0A1628', flex: 1, minHeight: 0, minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <PeerVideoCall
           myBiz={myBiz}
           other={displayOther}
@@ -381,7 +496,7 @@ function ChatView({
   }
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', height:'100%', minHeight:0 }}>
+    <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0, minWidth:0, width:'100%', overflow:'hidden' }}>
       {showIncomingBanner && (
         <div style={{ margin: '0 12px 8px', flexShrink: 0, background: 'rgba(30,126,247,0.15)', border: '1px solid rgba(30,126,247,0.45)', borderRadius: 12, padding: '10px 11px' }}>
           <div style={{ fontFamily: 'Syne, sans-serif', fontSize: 12.5, fontWeight: 700, marginBottom: 3 }}>📞 Incoming Call</div>
@@ -426,21 +541,23 @@ function ChatView({
           {normalizeLogoImage(displayOther.logo)
             ? <img src={normalizeLogoImage(displayOther.logo) || ''} alt={displayOther.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
             : logoInitials(displayOther.name)}
-          {isOtherOnline && <div style={{ position:'absolute', right:1, bottom:1, width:9, height:9, borderRadius:'50%', background:'#00D46A', border:'2px solid #0A1628' }} />}
         </div>}
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{displayOther?.name||'Chat'}</div>
+          <div style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
+            <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{displayOther?.name||'Chat'}</div>
+            {isOtherOnline && <div style={{ width:8, height:8, borderRadius:'50%', background:'#00D46A', flexShrink:0 }} />}
+          </div>
           <div style={{ fontSize:10.5, color:'#7A92B0' }}>{displayOther?.industry} · {displayOther?.city}</div>
         </div>
         <div className="icon-btn" style={{ width:34, height:34, fontSize:14 }} onClick={startCall}>📞</div>
       </div>
 
-      <div style={{ flex:1, overflowY:'auto', padding:'11px 15px' }}>
+      <div style={{ flex:1, minHeight:0, overflowY:'auto', WebkitOverflowScrolling:'touch', padding:'11px 15px' }}>
         {msgs.length === 0 && <div style={{ textAlign:'center', padding:'30px 0', color:'#7A92B0' }}><div style={{ fontSize:26, marginBottom:8 }}>👋</div><div style={{ fontSize:12.5 }}>Start the conversation</div></div>}
         {grouped.map(g => (
           <div key={g.date}>
             <div style={{ textAlign:'center', margin:'10px 0 9px' }}>
-              <span style={{ fontSize:9.5, color:'#3A5070', background:'#152236', padding:'3px 9px', borderRadius:9, fontWeight:600 }}>{new Date(g.msgs[0].created_at).toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' })}</span>
+              <span style={{ fontSize:9.5, color:'#3A5070', background:'#152236', padding:'3px 9px', borderRadius:9, fontWeight:600 }}>{new Date(g.msgs[0]?.created_at || 0).toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' })}</span>
             </div>
             {g.msgs.map((m, i) => {
               const mine = m.sender_id === myId
@@ -454,7 +571,7 @@ function ChatView({
                   {!mine && i > 0 && <div style={{ width:26, flexShrink:0 }} />}
                   <div style={{ maxWidth:'72%' }}>
                     <div style={{ padding:'8px 11px', borderRadius:mine?'14px 14px 4px 14px':'14px 14px 14px 4px', background:mine?'#1E7EF7':'#1A2D47', color:'#fff', fontSize:13, lineHeight:1.5, border:mine?'none':'1px solid rgba(255,255,255,0.07)' }}>{displayChatMessageText(m.text)}</div>
-                    <div style={{ fontSize:9.5, color:'#3A5070', marginTop:2, textAlign:mine?'right':'left' }}>{fmtTime(m.created_at)}</div>
+                    <div style={{ fontSize:9.5, color:'#3A5070', marginTop:2, textAlign:mine?'right':'left' }}>{fmtTime(m.created_at || '')}</div>
                   </div>
                 </div>
               )

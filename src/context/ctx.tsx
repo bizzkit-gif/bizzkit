@@ -206,14 +206,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return
       }
 
-      const prevUnread = unreadRef.current
       await refreshUnread()
-      if (unreadRef.current > prevUnread) {
-        playNotificationTone('message')
-        void tryShowNativeNotification('New message', 'You received a new chat message.', 'chat-message')
-        if (navigator.vibrate) navigator.vibrate([120, 60, 120])
-        if (tab !== 'messages') toast('New message received 💬', 'info')
-      }
+      // Sound for every incoming DM (not only when unread count increases — avoids missing a ping while in-thread).
+      playNotificationTone('message')
+      void tryShowNativeNotification('New message', 'You received a new chat message.', 'chat-message')
+      if (navigator.vibrate) navigator.vibrate([120, 60, 120])
+      if (tab !== 'messages') toast('New message received 💬', 'info')
     }
 
     /** Missed calls rewrite the same row (UPDATE). INSERT handlers never run for that. */

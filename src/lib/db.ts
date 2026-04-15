@@ -80,7 +80,8 @@ export function chatCallInviteMessageMissed(callerName: string): string {
 
 /** Hide internal marker in chat UI; stored text still includes it for detection. */
 export function displayChatMessageText(text: string | null | undefined): string {
-  const t = (text || '').trim()
+  const raw = typeof text === 'string' ? text : text == null ? '' : String(text)
+  const t = raw.trim()
   if (t.startsWith(CHAT_CALL_INVITE_MARKER)) {
     const rest = t.slice(CHAT_CALL_INVITE_MARKER.length).trim()
     return rest || t
@@ -229,10 +230,11 @@ export const COUNTRIES  = ['UAE','UK','USA','Saudi Arabia','Turkey','Nigeria','I
 export const TIMES      = ['9:00 AM','10:00 AM','12:00 PM','2:00 PM','5:00 PM','7:00 PM']
 export const EMOJIS     = ['📦','🛍️','💊','🍔','👕','⚡','🔧','💻','🏥','🌱','🤖','🔒','☁️','📊','🔗','🏭','🎯','💎']
 
-export function grad(id: string) {
+export function grad(id: string | undefined | null) {
+  const s = id ?? ''
   const g = ['gr1','gr2','gr3','gr4','gr5','gr6','gr7','gr8']
   let h = 0
-  for (let i = 0; i < id.length; i++) { h = ((h << 5) - h) + id.charCodeAt(i); h |= 0 }
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0 }
   return g[Math.abs(h) % g.length]
 }
 
