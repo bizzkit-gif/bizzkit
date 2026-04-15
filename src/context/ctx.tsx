@@ -26,6 +26,7 @@ type Ctx = {
   clearPendingRandomCall: () => void
   pendingChatCallFromBusinessId: string | null
   clearPendingChatCall: () => void
+  signOut: () => Promise<void>
 }
 
 const AppCtx = createContext<Ctx>({} as Ctx)
@@ -71,6 +72,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       toastHideRef.current = null
     }, durationMs)
   }, [])
+
+  const signOut = useCallback(async () => {
+    const { error } = await sb.auth.signOut()
+    if (error) {
+      toast(error.message, 'error')
+      return
+    }
+    setTab('feed')
+    setPrevTab('feed')
+    setViewId(null)
+    setChatWith(null)
+    setUnread(0)
+    setPendingRandomCallFromBusinessId(null)
+    setPendingChatCallFromBusinessId(null)
+    lastRandomInviteMsgIdRef.current = null
+    lastChatInviteMsgIdRef.current = null
+  }, [toast])
 
   type RandomInviteRow = { id?: string; sender_id?: string; text?: string | null }
 
@@ -283,7 +301,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       refreshBiz,
       toast, toastMsg, toastType, toastVisible,
       pendingRandomCallFromBusinessId, clearPendingRandomCall,
-      pendingChatCallFromBusinessId, clearPendingChatCall
+      pendingChatCallFromBusinessId, clearPendingChatCall,
+      signOut
     }}>
       {children}
     </AppCtx.Provider>

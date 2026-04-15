@@ -317,7 +317,7 @@ return (
 
 // ── BIZ FORM ──────────────────────────────────────────────────────
 function BizForm({ existing, onSaved, onCancel }: { existing?:Business; onSaved:()=>void; onCancel?:()=>void }) {
-const { user, toast } = useApp()
+const { user, toast, signOut } = useApp()
 const [name, setName] = useState(existing?.name||'')
 const [tagline, setTagline] = useState(existing?.tagline||'')
 const [desc, setDesc] = useState(existing?.description||'')
@@ -467,6 +467,9 @@ return (
 <div style={{ height:92 }} />
 </div>
 <div style={{ position:'sticky', bottom:0, zIndex:20, padding:'10px 16px calc(10px + env(safe-area-inset-bottom,0px))', background:'linear-gradient(to top, rgba(10,22,40,0.98) 70%, rgba(10,22,40,0))' }}>
+{!!existing && (
+<button type="button" className="btn btn-ghost btn-full btn-sm" style={{ marginBottom:9, border:'1px solid rgba(255,75,110,0.28)', color:'#FF8A9E' }} onClick={() => void signOut()}>Log out</button>
+)}
 <button className="btn btn-blue btn-full" onClick={save} disabled={saving}>{saving?'Saving...':existing?'Save Changes':'Create Profile'}</button>
 </div>
 </div>
