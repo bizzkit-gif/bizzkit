@@ -483,15 +483,36 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
           {(feedView === 'explore' || feedView === 'connected') && (
             <>
           <div className="sec-hd">
-            <h3>{search ? `"${search}"` : feedView === 'connected' ? 'Connected Businesses' : 'Explore businesses'}</h3>
-            <span className="see-all">{items.length} found</span>
+            <h3>{feedView === 'connected' ? 'Connected Businesses' : 'Explore businesses'}</h3>
+            <span className="see-all">
+              {search.trim()
+                ? `${items.length} match${items.length === 1 ? '' : 'es'}`
+                : `${items.length} found`}
+            </span>
           </div>
+          {search.trim() ? (
+            <div style={{ margin:'-6px 16px 10px', fontSize:11.5, color:'#7A92B0', fontWeight:600 }}>
+              Searching: <span style={{ color:'#E8EEF5' }}>{search.trim()}</span>
+            </div>
+          ) : null}
 
           {items.length === 0 && (
             <div className="empty">
               <div className="ico">{feedView === 'connected' ? '🤝' : '🔍'}</div>
-              <h3>{feedView === 'connected' ? 'No connected businesses yet' : 'No businesses found'}</h3>
-              <p>{feedView === 'connected' ? 'Connect with businesses from Explore.' : 'Try a different search or filter'}</p>
+              <h3>
+                {feedView === 'connected'
+                  ? 'No connected businesses yet'
+                  : search.trim()
+                    ? 'No matches for that search'
+                    : 'No businesses found'}
+              </h3>
+              <p>
+                {feedView === 'connected'
+                  ? 'Connect with businesses from Explore.'
+                  : search.trim()
+                    ? 'Try different words, clear the search box, or change the industry chip above.'
+                    : 'Try a different search or filter'}
+              </p>
             </div>
           )}
 
