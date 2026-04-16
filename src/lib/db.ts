@@ -244,6 +244,27 @@ export function otherConnectionBusinessId(
   return null
 }
 
+/** Remove the single connection row between two businesses (either insert direction). */
+export async function deleteConnectionBetween(
+  businessIdA: string,
+  businessIdB: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const nb = normalizeUuid(businessIdB)
+  const { data: rows, error: selErr } = await sb
+    .from('connections')
+    .select('id,from_biz_id,to_biz_id')
+    .or(`from_biz_id.eq.${businessIdA},to_biz_id.eq.${businessIdA}`)
+  if (selErr) return { ok: false, error: selErr.message }
+  const row = (rows || []).find((r: { id: string; from_biz_id: string; to_biz_id: string }) => {
+    const other = otherConnectionBusinessId(r, businessIdA)
+    return other != null && normalizeUuid(other) === nb
+  })
+  if (!row) return { ok: false, error: 'Connection not found.' }
+  const { error: delErr } = await sb.from('connections').delete().eq('id', row.id)
+  if (delErr) return { ok: false, error: delErr.message }
+  return { ok: true }
+}
+
 /**
  * Load `businesses` rows by id (chunked). Uses SECURITY DEFINER RPC when deployed so peer names
  * are not blocked by RLS; falls back to PostgREST `.in()` + per-id reads.

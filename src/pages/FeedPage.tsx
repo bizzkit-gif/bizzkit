@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { sb, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid } from '../lib/db'
+import { sb, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid, deleteConnectionBetween } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 /** Narrow columns + product fields — faster than `*,products(*)`. */
@@ -306,7 +306,17 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
   const doConnect = async (b: Business) => {
     if (!myBiz) { toast('Create a business profile first', 'info'); return }
-    if (conns.has(normalizeUuid(b.id))) { toast('Already connected!', 'info'); return }
+    if (conns.has(normalizeUuid(b.id))) {
+      const r = await deleteConnectionBetween(myBiz.id, b.id)
+      if (!r.ok) { toast('Failed to disconnect: ' + r.error, 'error'); return }
+      setConns((s) => {
+        const next = new Set(s)
+        next.delete(normalizeUuid(b.id))
+        return next
+      })
+      toast('Disconnected from ' + b.name)
+      return
+    }
     const { error: connErr } = await sb.from('connections').insert({ from_biz_id: myBiz.id, to_biz_id: b.id })
     if (connErr) { toast('Failed to connect: ' + connErr.message, 'error'); return }
     const { error: chatErr } = await sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: b.id })
@@ -557,9 +567,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                   <button onClick={() => toast('RFQ sent to ' + b.name, 'info')} style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:4, fontSize:11, fontWeight:600, color:'#7A92B0', background:'none', border:'none', flex:1, padding:5, borderRadius:7, cursor:'pointer' }}>
                     📋 RFQ
                   </button>
-                  {feedView === 'explore' && (
+                  {(feedView === 'explore' || feedView === 'connected') && (
                     <button onClick={() => doConnect(b)} className={`btn btn-sm ${isConn?'btn-ghost':'btn-blue'}`} style={{ flexShrink:0 }}>
-                      {isConn ? '✓ Connected' : 'Connect'}
+                      {isConn ? 'Disconnect' : 'Connect'}
                     </button>
                   )}
                 </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal, fetchBusinessProfilesByIds, otherConnectionBusinessId, normalizeUuid } from '../lib/db'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal, fetchBusinessProfilesByIds, otherConnectionBusinessId, normalizeUuid, deleteConnectionBetween } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { sendPushNotification } from '../lib/push'
 import { useApp } from '../context/ctx'
@@ -142,7 +142,14 @@ useEffect(() => {
 
 const doConnect = async () => {
 if (!myBiz || !biz) { toast('Create a profile first', 'info'); return }
-if (isConn) { toast('Already connected!', 'info'); return }
+if (isConn) {
+  const r = await deleteConnectionBetween(myBiz.id, biz.id)
+  if (!r.ok) { toast('Failed to disconnect: ' + r.error, 'error'); return }
+  setIsConn(false)
+  setConnections((prev) => prev.filter((c) => normalizeUuid(c.id) !== normalizeUuid(myBiz.id)))
+  toast('Disconnected from ' + biz.name)
+  return
+}
 const { error: connErr } = await sb.from('connections').insert({ from_biz_id:myBiz.id, to_biz_id:biz.id })
 if (connErr) { toast('Failed to connect: ' + connErr.message, 'error'); return }
 await sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:biz.id })
@@ -433,7 +440,7 @@ return (
 )}
 {!isOwn && (
 <div style={{ display:'flex', gap:7, marginBottom:15 }}>
-<button onClick={doConnect} className={`btn btn-full ${isConn?'btn-ghost':'btn-blue'}`} style={{ flex:1 }}>{isConn?'✓ Connected':'🤝 Connect'}</button>
+<button onClick={doConnect} className={`btn btn-full ${isConn?'btn-ghost':'btn-blue'}`} style={{ flex:1 }}>{isConn?'Disconnect':'🤝 Connect'}</button>
 <button onClick={() => onChat?.(biz.id)} className="btn btn-accent" style={{ flex:1 }}>💬 Message</button>
 </div>
 )}
