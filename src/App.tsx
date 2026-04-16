@@ -12,7 +12,7 @@ const NAV = [
   { id:'feed',       icon:'🏠', label:'Home'    },
   { id:'conference', icon:'📅', label:'Connect' },
   { id:'random',     icon:'🎲', label:'Random'  },
-  { id:'messages',   icon:'💬', label:'Chat'    },
+  { id:'messages',   icon:'💬', label:'Messages' },
   { id:'profile',    icon:'🏢', label:'Profile' },
 ]
 
