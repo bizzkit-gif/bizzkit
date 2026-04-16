@@ -23,6 +23,36 @@ const logoInitials = (name?: string) => (name || '').split(' ').slice(0,2).map(w
 /** List row only — avoids N+1 `businesses` + `messages` round-trips per chat. */
 const CHAT_PEER_SELECT = 'id,name,logo,logo_url,industry,city'
 
+function peerIdForChat(c: { participant_a: string; participant_b: string }, myId: string): string {
+  return c.participant_a === myId ? c.participant_b : c.participant_a
+}
+
+/** If batch `businesses.in()` misses a row (RLS, etc.), still render the thread. */
+function fallbackPeer(othId: string): Business {
+  return {
+    id: othId,
+    owner_id: '',
+    name: 'Business',
+    tagline: '',
+    description: '',
+    industry: '—',
+    type: 'B2B',
+    city: '',
+    country: '',
+    website: '',
+    founded: '',
+    logo: '',
+    grad: 'gr1',
+    kyc_verified: false,
+    certified: false,
+    trust_score: 0,
+    trust_tier: 'Bronze',
+    followers: 0,
+    created_at: '',
+    updated_at: '',
+  }
+}
+
 function isValidChatMsg(m: unknown): m is Msg {
   if (!m || typeof m !== 'object') return false
   const o = m as Record<string, unknown>
@@ -103,67 +133,83 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
 
   const loadChats = useCallback(async () => {
     if (!myBiz) return
-    const { data: rows } = await sb
-      .from('chats')
-      .select('id,participant_a,participant_b,created_at')
-      .or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
-    if (!rows?.length) {
+    try {
+      const { data: rows, error: rowsErr } = await sb
+        .from('chats')
+        .select('id,participant_a,participant_b,created_at')
+        .or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
+      if (rowsErr) {
+        console.warn('loadChats chats:', rowsErr.message)
+        setChats([])
+        setUnread(0)
+        return
+      }
+      if (!rows?.length) {
+        setChats([])
+        setUnread(0)
+        return
+      }
+
+      const chatIds = rows.map((c) => c.id)
+      const othIds = [...new Set(rows.map((c: { participant_a: string; participant_b: string }) => peerIdForChat(c, myBiz.id)))]
+
+      const msgLimit = Math.min(5000, Math.max(400, chatIds.length * 100))
+
+      const [peersRes, unreadRes, recentMsgsRes] = await Promise.all([
+        sb.from('businesses').select(CHAT_PEER_SELECT).in('id', othIds),
+        sb.from('messages').select('chat_id').in('chat_id', chatIds).neq('sender_id', myBiz.id).eq('read', false),
+        sb
+          .from('messages')
+          .select('chat_id,sender_id,text,created_at')
+          .in('chat_id', chatIds)
+          .order('created_at', { ascending: false })
+          .limit(msgLimit),
+      ])
+
+      if (peersRes.error) {
+        console.warn('loadChats peers:', peersRes.error.message)
+      }
+
+      const peerById = new Map((peersRes.data || []).map((p: Business) => [p.id, p]))
+      const unreadByChat = new Map<string, number>()
+      for (const r of unreadRes.data || []) {
+        const cid = (r as { chat_id: string }).chat_id
+        unreadByChat.set(cid, (unreadByChat.get(cid) || 0) + 1)
+      }
+
+      const lastByChat = new Map<string, { text: string; created_at: string }>()
+      for (const m of recentMsgsRes.data || []) {
+        const row = m as { chat_id: string; text: string | null; created_at: string }
+        if (!lastByChat.has(row.chat_id)) {
+          lastByChat.set(row.chat_id, { text: row.text ?? '', created_at: row.created_at })
+        }
+      }
+
+      const enriched: Chat[] = rows.map((c: { id: string; participant_a: string; participant_b: string; created_at: string }) => {
+        const othId = peerIdForChat(c, myBiz.id)
+        const other = peerById.get(othId) ?? fallbackPeer(othId)
+        const last = lastByChat.get(c.id)
+        return {
+          ...c,
+          other_biz: other,
+          last_msg: last?.text,
+          last_ts: last?.created_at,
+          unread: unreadByChat.get(c.id) || 0,
+        }
+      })
+      enriched.sort((a, b) =>
+        String(b.last_ts || b.created_at || '').localeCompare(String(a.last_ts || a.created_at || ''))
+      )
+      setChats(enriched)
+      setUnread(enriched.reduce((s, c) => s + (c.unread || 0), 0))
+    } catch (e) {
+      console.warn('loadChats', e)
       setChats([])
       setUnread(0)
+    } finally {
       setLoading(false)
-      return
     }
-
-    const chatIds = rows.map((c) => c.id)
-    const othIds = [...new Set(rows.map((c: { participant_a: string; participant_b: string }) => (c.participant_a === myBiz.id ? c.participant_b : c.participant_a)))]
-
-    const msgLimit = Math.min(5000, Math.max(400, chatIds.length * 100))
-
-    const [peersRes, unreadRes, recentMsgsRes] = await Promise.all([
-      sb.from('businesses').select(CHAT_PEER_SELECT).in('id', othIds),
-      sb.from('messages').select('chat_id').in('chat_id', chatIds).neq('sender_id', myBiz.id).eq('read', false),
-      sb
-        .from('messages')
-        .select('chat_id,sender_id,text,created_at')
-        .in('chat_id', chatIds)
-        .order('created_at', { ascending: false })
-        .limit(msgLimit),
-    ])
-
-    const peerById = new Map((peersRes.data || []).map((p: Business) => [p.id, p]))
-    const unreadByChat = new Map<string, number>()
-    for (const r of unreadRes.data || []) {
-      const cid = (r as { chat_id: string }).chat_id
-      unreadByChat.set(cid, (unreadByChat.get(cid) || 0) + 1)
-    }
-
-    const lastByChat = new Map<string, { text: string; created_at: string }>()
-    for (const m of recentMsgsRes.data || []) {
-      const row = m as { chat_id: string; text: string | null; created_at: string }
-      if (!lastByChat.has(row.chat_id)) {
-        lastByChat.set(row.chat_id, { text: row.text ?? '', created_at: row.created_at })
-      }
-    }
-
-    const enriched: Chat[] = rows.map((c: { id: string; participant_a: string; participant_b: string; created_at: string }) => {
-      const othId = c.participant_a === myBiz.id ? c.participant_b : c.participant_a
-      const other = peerById.get(othId)
-      const last = lastByChat.get(c.id)
-      return {
-        ...c,
-        other_biz: other,
-        last_msg: last?.text,
-        last_ts: last?.created_at,
-        unread: unreadByChat.get(c.id) || 0,
-      }
-    })
-    enriched.sort((a, b) =>
-      String(b.last_ts || b.created_at || '').localeCompare(String(a.last_ts || a.created_at || ''))
-    )
-    setChats(enriched)
-    setUnread(enriched.reduce((s, c) => s + (c.unread || 0), 0))
-    setLoading(false)
-  }, [myBiz?.id, setUnread])
+  }, [myBiz, setUnread])
 
   useEffect(() => { loadChats() }, [loadChats])
 
@@ -321,8 +367,8 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
       {loading && <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>}
       {!loading && chats.length === 0 && <div className="empty"><div className="ico">💬</div><h3>No messages yet</h3><p>Connect with businesses in the Feed to start conversations.</p></div>}
       {chats.map(c => {
-        if (!c.other_biz) return null
-        const isOnline = !!onlineById[c.other_biz.id]
+        const peer = c.other_biz ?? fallbackPeer(peerIdForChat(c, myBiz.id))
+        const isOnline = !!onlineById[peer.id]
         return (
           <div
             key={c.id}
@@ -332,21 +378,21 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
             }}
             style={{ display:'flex', alignItems:'center', gap:11, padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', cursor:'pointer' }}
           >
-            <div className={grad(c.other_biz.id)} style={{ width:46, height:46, borderRadius:13, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, position:'relative', overflow:'hidden' }}>
-              {normalizeLogoImage(c.other_biz.logo)
-                ? <img src={normalizeLogoImage(c.other_biz.logo) || ''} alt={c.other_biz.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
-                : logoInitials(c.other_biz.name)}
+            <div className={grad(peer.id)} style={{ width:46, height:46, borderRadius:13, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15, color:'#fff', flexShrink:0, position:'relative', overflow:'hidden' }}>
+              {normalizeLogoImage(peer.logo)
+                ? <img src={normalizeLogoImage(peer.logo) || ''} alt={peer.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+                : logoInitials(peer.name)}
               {(c.unread||0) > 0 && <div className="bni-badge">{c.unread}</div>}
             </div>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
-                  <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.other_biz.name}</div>
+                  <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{peer.name}</div>
                   {isOnline && <div style={{ width:8, height:8, borderRadius:'50%', background:'#00D46A', flexShrink:0 }} />}
                 </div>
                 {c.last_ts && <div style={{ fontSize:10, color:'#7A92B0', flexShrink:0, marginLeft:8 }}>{timeAgo(c.last_ts)}</div>}
               </div>
-              <div style={{ fontSize:10.5, color:'#3A5070', marginTop:1 }}>{c.other_biz.industry} · {c.other_biz.city}</div>
+              <div style={{ fontSize:10.5, color:'#3A5070', marginTop:1 }}>{peer.industry} · {peer.city}</div>
               {c.last_msg && <div style={{ fontSize:12, color:(c.unread||0)>0?'#fff':'#3A5070', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontWeight:(c.unread||0)>0?600:400 }}>{displayChatMessageText(c.last_msg)}</div>}
             </div>
             <div style={{ color:'#3A5070', fontSize:16 }}>›</div>
