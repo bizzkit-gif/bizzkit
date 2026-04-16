@@ -19,6 +19,22 @@ const NAV = [
 export default function App() {
   const { user, loading, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
 
+  /** Until the first session resolves, `user` is null — do not render Auth (logged-in users would flash login → app on cold start / PWA). */
+  if (loading) {
+    return (
+      <div className="shell">
+        <div className="screen-area">
+          <div className="screen">
+            <div className="loading">
+              <div className="loading-logo">Biz<span>z</span>kit</div>
+              <div className="spinner" aria-hidden />
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const go = (t: string) => {
     setPrevTab(tab)
     setTab(t)
