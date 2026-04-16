@@ -5,7 +5,7 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#060E1C",
+  "background_color": "#0A1628",
   "theme_color": "#0A1628",
   "orientation": "portrait-primary",
   "categories": ["business", "networking"],
