@@ -7,7 +7,10 @@ import { registerServiceWorker } from './lib/push'
 import { primeNotificationAudio } from './lib/notify'
 import { reportUnhandledError } from './lib/errorReporting'
 
-void registerServiceWorker()
+/** Defer SW so first paint + session UI are not contending with registration (helps iOS PWA cold start). */
+window.requestAnimationFrame(() => {
+  void registerServiceWorker()
+})
 
 window.addEventListener('error', (event) => {
   reportUnhandledError(event.error ?? event.message)

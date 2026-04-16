@@ -22,6 +22,38 @@ function getAuthStorageMode(): AuthStorageMode {
   return m === 'session' ? 'session' : 'local'
 }
 
+/** Same key pattern as @supabase/supabase-js (`sb-<project-ref>-auth-token`). */
+export function supabaseAuthStorageKey(): string {
+  const host = new URL(SUPABASE_URL).hostname.split('.')[0]
+  return `sb-${host}-auth-token`
+}
+
+/**
+ * Synchronous read of persisted session blob — matches where `sb` stores auth.
+ * Used so the first paint can use the same chrome as the post-login app (bottom nav)
+ * while `getSession()` is still resolving (removes a common iOS PWA “flash”).
+ */
+export function peekPersistedAuthPresent(): boolean {
+  if (typeof window === 'undefined') return false
+  const key = supabaseAuthStorageKey()
+  const looksLikeSession = (raw: string | null): boolean => {
+    if (!raw) return false
+    try {
+      const v = JSON.parse(raw) as unknown
+      if (!v || typeof v !== 'object') return false
+      const o = v as Record<string, unknown>
+      return typeof o.access_token === 'string' || typeof o.refresh_token === 'string'
+    } catch {
+      return false
+    }
+  }
+  const mode = getAuthStorageMode()
+  if (mode === 'session') {
+    return looksLikeSession(sessionStorage.getItem(key))
+  }
+  return looksLikeSession(localStorage.getItem(key)) || looksLikeSession(sessionStorage.getItem(key))
+}
+
 /** Supabase auth persistence: mirrors default behaviour with a switchable backing store. */
 const authStorageAdapter: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = {
   getItem(key: string): string | null {

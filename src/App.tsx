@@ -16,8 +16,31 @@ const NAV = [
   { id:'profile',    icon:'🏢', label:'Profile' },
 ]
 
+function MainBottomNav({ dimmed }: { dimmed?: boolean }) {
+  const { tab, setTab, setPrevTab, setViewId, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
+  const go = (t: string) => {
+    setPrevTab(tab)
+    setTab(t)
+    if (t !== 'profile' && t !== 'legal' && t !== 'notifications') setViewId(null)
+  }
+  return (
+    <nav className={`bnav${dimmed ? ' bnav-dimmed' : ''}`} aria-hidden={dimmed || undefined}>
+      {NAV.map(n => (
+        <div key={n.id} className={`bni${tab===n.id||(n.id==='profile'&&(tab==='trust'||tab==='kyc'))?' on':''}`} onClick={() => { if (dimmed) return; go(n.id) }}>
+          <div className="bni-ico">
+            {n.icon}
+            {n.id==='messages'&&(unread>0||!!pendingChatCallFromBusinessId)&&<div className="bni-badge">{unread>0?(unread>9?'9+':unread):'!'}</div>}
+            {n.id==='random'&&!!pendingRandomCallFromBusinessId&&<div className="bni-badge">!</div>}
+          </div>
+          <span className="bni-lbl">{n.label}</span>
+        </div>
+      ))}
+    </nav>
+  )
+}
+
 export default function App() {
-  const { user, loading, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
+  const { user, loading, bootLikelyAuthed, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
 
   /** Until the first session resolves, `user` is null — do not render Auth (logged-in users would flash login → app on cold start / PWA). */
   if (loading) {
@@ -31,6 +54,7 @@ export default function App() {
             </div>
           </div>
         </div>
+        {bootLikelyAuthed ? <MainBottomNav dimmed /> : null}
       </div>
     )
   }
@@ -43,7 +67,6 @@ export default function App() {
   const viewBiz = (id: string) => { setViewId(id); setPrevTab(tab); setTab('profile') }
   const openChat = (id: string) => { setChatWith(id); setPrevTab(tab); setTab('messages') }
 
-  // Always show auth if no user, even during loading
   if (!user) return (
     <div className="shell">
       <div className="screen-area">
@@ -72,18 +95,7 @@ export default function App() {
           <div className={`screen${tab === 'random' || tab === 'messages' ? ' screen-fit' : ''}`}>{screen()}</div>
         </ErrorBoundary>
       </div>
-      <nav className="bnav">
-        {NAV.map(n => (
-          <div key={n.id} className={`bni${tab===n.id||(n.id==='profile'&&(tab==='trust'||tab==='kyc'))?' on':''}`} onClick={() => go(n.id)}>
-            <div className="bni-ico">
-              {n.icon}
-              {n.id==='messages'&&(unread>0||!!pendingChatCallFromBusinessId)&&<div className="bni-badge">{unread>0?(unread>9?'9+':unread):'!'}</div>}
-              {n.id==='random'&&!!pendingRandomCallFromBusinessId&&<div className="bni-badge">!</div>}
-            </div>
-            <span className="bni-lbl">{n.label}</span>
-          </div>
-        ))}
-      </nav>
+      <MainBottomNav />
       <div className={`toast${toastVisible?' show':''}${toastType==='error'?' err':toastType==='info'?' info':''}`}>{toastMsg}</div>
     </div>
   )

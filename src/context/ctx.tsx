@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, RANDOM_CALL_INVITE_MARKER, CHAT_CALL_INVITE_MARKER } from '../lib/db'
+import { sb, Business, RANDOM_CALL_INVITE_MARKER, CHAT_CALL_INVITE_MARKER, peekPersistedAuthPresent } from '../lib/db'
 import { setEmailHasProfile, clearEmailHasProfile } from '../lib/profileLocal'
 import { playNotificationTone, syncAppIconBadge, tryShowNativeNotification } from '../lib/notify'
 import { vibrateIfEnabled } from '../lib/notificationSettings'
@@ -11,6 +11,8 @@ type Ctx = {
   user: any
   myBiz: Business | null
   loading: boolean
+  /** True when local/session storage already has Supabase auth JSON (first paint can match logged-in shell). */
+  bootLikelyAuthed: boolean
   tab: string
   setTab: (t: string) => void
   prevTab: string
@@ -39,6 +41,7 @@ export const useApp = () => useContext(AppCtx)
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null)
   const [myBiz, setMyBiz] = useState<Business | null>(null)
+  const [bootLikelyAuthed] = useState(() => peekPersistedAuthPresent())
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('feed')
   const [prevTab, setPrevTab] = useState('feed')
@@ -326,7 +329,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AppCtx.Provider value={{
-      user, myBiz, loading,
+      user, myBiz, loading, bootLikelyAuthed,
       tab, setTab, prevTab, setPrevTab,
       viewId, setViewId,
       chatWith, setChatWith,
