@@ -1,4 +1,5 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react'
+import { reportClientError } from '../lib/errorReporting'
 
 type Props = { children: ReactNode }
 
@@ -15,7 +16,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('[Bizzkit]', error, info.componentStack)
+    reportClientError(error, { source: 'ErrorBoundary', componentStack: info.componentStack })
   }
 
   render(): ReactNode {

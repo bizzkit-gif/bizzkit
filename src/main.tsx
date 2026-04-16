@@ -5,8 +5,16 @@ import App from './App'
 import './styles/app.css'
 import { registerServiceWorker } from './lib/push'
 import { primeNotificationAudio } from './lib/notify'
+import { reportUnhandledError } from './lib/errorReporting'
 
 void registerServiceWorker()
+
+window.addEventListener('error', (event) => {
+  reportUnhandledError(event.error ?? event.message)
+})
+window.addEventListener('unhandledrejection', (event) => {
+  reportUnhandledError(event.reason)
+})
 
 /** Unlock Web Audio on first tap (required on iOS Safari for message/call tones). */
 const primeAudioOnce = () => {

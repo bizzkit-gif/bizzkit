@@ -21,7 +21,7 @@ const logoText = (name?: string) => getLogo(name || '')
 
 // ── PROFILE PAGE ─────────────────────────────────────────────────
 export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:string|null; onBack?:()=>void; onChat?:(id:string)=>void; onTrust?:()=>void }) {
-const { user, myBiz, refreshBiz, toast } = useApp()
+const { user, myBiz, refreshBiz, toast, setTab: setAppTab, setPrevTab } = useApp()
 const isOwn = !viewId || viewId === myBiz?.id
 const [biz, setBiz] = useState<Business|null>(null)
 const [tab, setTab] = useState<'posts'|'about'>('posts')
@@ -174,7 +174,32 @@ return (
 ) : (
 <div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{logoText(biz.name)}</div>
 )}
-{isOwn && <span style={{ fontSize:11, color:'#1E7EF7', fontWeight:700, cursor:'pointer', marginBottom:4 }} onClick={onTrust}>Trust Score →</span>}
+{isOwn && (
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginBottom: 4 }}>
+    <span style={{ fontSize: 11, color: '#1E7EF7', fontWeight: 700, cursor: 'pointer' }} onClick={onTrust}>
+      Trust Score →
+    </span>
+    <button
+      type="button"
+      onClick={() => {
+        setPrevTab('profile')
+        setAppTab('legal')
+      }}
+      style={{
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        fontSize: 11,
+        color: '#3A5070',
+        fontWeight: 600,
+        cursor: 'pointer',
+        textDecoration: 'underline',
+      }}
+    >
+      Privacy & Terms
+    </button>
+  </div>
+)}
 </div>
 <div style={{ marginTop:9 }}>
 <div style={{ fontFamily:'Syne, sans-serif', fontSize:19, fontWeight:800 }}>{biz.name}</div>

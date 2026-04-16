@@ -5,6 +5,7 @@ import AuthPage from './pages/AuthPage'
 import FeedPage from './pages/FeedPage'
 import MessagesPage from './pages/MessagesPage'
 import { ProfilePage, ConferencePage, GoRandomPage, TrustPage, KycFormPage } from './pages/OtherPages'
+import LegalPage from './pages/LegalPage'
 
 const NAV = [
   { id:'feed',       icon:'🏠', label:'Feed'    },
@@ -17,7 +18,7 @@ const NAV = [
 export default function App() {
   const { user, loading, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
 
-  const go = (t: string) => { setPrevTab(tab); setTab(t); if(t!=='profile') setViewId(null) }
+  const go = (t: string) => { setPrevTab(tab); setTab(t); if (t !== 'profile' && t !== 'legal') setViewId(null) }
   const viewBiz = (id: string) => { setViewId(id); setPrevTab(tab); setTab('profile') }
   const openChat = (id: string) => { setChatWith(id); setPrevTab(tab); setTab('messages') }
 
@@ -38,6 +39,7 @@ export default function App() {
     if (tab==='messages')   return <MessagesPage openWith={chatWith} onClearOpen={() => setChatWith(null)} />
     if (tab==='trust')      return <TrustPage onOpenKyc={() => go('kyc')} />
     if (tab==='kyc')        return <KycFormPage onBack={() => go('trust')} />
+    if (tab==='legal')      return <LegalPage onBack={() => setTab(prevTab)} />
     return <FeedPage onView={viewBiz} />
   }
 
