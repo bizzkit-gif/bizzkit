@@ -29,6 +29,29 @@ const cleanDisplayText = (value?: string | null): string => {
   return v.replace(/[A-Za-z0-9+/=]{40,}/g, '').trim()
 }
 
+/** Concatenate searchable fields (name-only search missed tagline/city/products and threw on null name). */
+function businessSearchBlob(b: Business): string {
+  return [
+    b.name,
+    b.tagline,
+    b.industry,
+    b.city,
+    b.country,
+    b.type,
+    ...(b.products?.flatMap((p) => [p.name, p.price, p.category, p.emoji]) ?? []),
+  ]
+    .filter((x): x is string => typeof x === 'string')
+    .join(' ')
+}
+
+/** Every whitespace-separated term must appear as a substring (case-insensitive). */
+function matchesSearchText(haystack: string, rawQuery: string): boolean {
+  const q = rawQuery.trim().toLowerCase()
+  if (!q) return true
+  const h = haystack.toLowerCase()
+  return q.split(/\s+/).filter(Boolean).every((term) => h.includes(term))
+}
+
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
@@ -216,15 +239,15 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const connectedBase = list.filter((b) => conns.has(normalizeUuid(b.id)))
   const source = feedView === 'connected' ? connectedBase : feedView === 'explore' ? discoverBase : []
 
-  const items = source.filter(b => {
+  const items = source.filter((b) => {
     const mf = filter === 'All' || b.industry === filter
-    const ms = !search || b.name.toLowerCase().includes(search.toLowerCase())
+    const ms = matchesSearchText(businessSearchBlob(b), search)
     return mf && ms
   })
 
-  const trending = discoverBase.filter(b => {
+  const trending = discoverBase.filter((b) => {
     const mf = filter === 'All' || b.industry === filter
-    const ms = !search || b.name.toLowerCase().includes(search.toLowerCase())
+    const ms = matchesSearchText(businessSearchBlob(b), search)
     return mf && ms && b.trust_score >= 70
   }).slice(0, 4)
 
@@ -232,10 +255,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   if (myBiz) bizById.set(normalizeUuid(myBiz.id), myBiz)
   const connectionFeedPosts = connectionPosts.filter((p) => {
     const b = bizById.get(normalizeUuid(p.business_id))
-    if (!b) return true
-    const industryOk = filter === 'All' || b.industry === filter
-    const searchLower = search.toLowerCase()
-    const textMatch = !search || (p.content || '').toLowerCase().includes(searchLower) || b.name.toLowerCase().includes(searchLower)
+    const industryOk = !b || filter === 'All' || b.industry === filter
+    const blob = b ? `${businessSearchBlob(b)} ${p.content || ''}` : (p.content || '')
+    const textMatch = matchesSearchText(blob, search)
     return industryOk && textMatch
   })
 
