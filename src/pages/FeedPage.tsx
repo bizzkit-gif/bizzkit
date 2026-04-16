@@ -323,14 +323,14 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
       <div style={{ margin:'0 16px 12px', display:'flex', background:'#152236', borderRadius:12, padding:4, border:'1px solid rgba(255,255,255,0.07)', gap:2 }}>
         {([
-          { id:'feed' as const, label:'Feed' },
+          { id:'feed' as const, label:'Home' },
           { id:'explore' as const, label:'Explore' },
           { id:'connected' as const, label:'Connected' }
         ]).map(v => (
           <button
             key={v.id}
             type="button"
-            title={v.id === 'explore' ? 'Explore businesses' : v.id === 'connected' ? 'Connected businesses' : 'Your feed'}
+            title={v.id === 'explore' ? 'Explore businesses' : v.id === 'connected' ? 'Connected businesses' : 'Home'}
             onClick={() => setFeedView(v.id)}
             style={{
               flex:1,

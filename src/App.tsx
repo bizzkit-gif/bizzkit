@@ -9,7 +9,7 @@ import LegalPage from './pages/LegalPage'
 import NotificationSettingsPage from './pages/NotificationSettingsPage'
 
 const NAV = [
-  { id:'feed',       icon:'🏠', label:'Feed'    },
+  { id:'feed',       icon:'🏠', label:'Home'    },
   { id:'conference', icon:'📅', label:'Connect' },
   { id:'random',     icon:'🎲', label:'Random'  },
   { id:'messages',   icon:'💬', label:'Chat'    },
