@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { sb, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid } from '../lib/db'
 import { useApp } from '../context/ctx'
 
@@ -45,6 +45,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     media_type: string | null
     created_at: string
   }>>([])
+  const [likesByPostId, setLikesByPostId] = useState<Record<string, number>>({})
+  const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set())
+  const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   /** Same source as bottom-nav Chat badge: updates on Realtime (includes Random call invite messages). */
   const bellBadgeCount = Math.max(unread, pendingRandomCallFromBusinessId ? 1 : 0, pendingChatCallFromBusinessId ? 1 : 0)
@@ -141,6 +144,55 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       .then(({ data }) => setConnectionPosts((data as typeof connectionPosts) || []))
   }, [connKey, myBiz?.id])
 
+  const feedPostIdsKey = useMemo(
+    () => connectionPosts.map((p) => p.id).sort().join(','),
+    [connectionPosts],
+  )
+
+  useEffect(() => {
+    if (!feedPostIdsKey) {
+      setLikesByPostId({})
+      setLikedPostIds(new Set())
+      return
+    }
+    const postIds = connectionPosts.map((p) => p.id)
+    let cancelled = false
+    const CHUNK = 100
+    void (async () => {
+      const counts: Record<string, number> = {}
+      for (let i = 0; i < postIds.length; i += CHUNK) {
+        const chunk = postIds.slice(i, i + CHUNK)
+        const { data: likeRows } = await sb.from('post_likes').select('post_id').in('post_id', chunk)
+        for (const r of likeRows || []) {
+          const pid = (r as { post_id: string }).post_id
+          counts[pid] = (counts[pid] || 0) + 1
+        }
+      }
+      if (cancelled) return
+      setLikesByPostId(counts)
+      if (!myBiz) {
+        setLikedPostIds(new Set())
+        return
+      }
+      const mine = new Set<string>()
+      for (let i = 0; i < postIds.length; i += CHUNK) {
+        const chunk = postIds.slice(i, i + CHUNK)
+        const { data: likedRows } = await sb
+          .from('post_likes')
+          .select('post_id')
+          .eq('business_id', myBiz.id)
+          .in('post_id', chunk)
+        for (const r of likedRows || []) {
+          mine.add((r as { post_id: string }).post_id)
+        }
+      }
+      if (!cancelled) setLikedPostIds(mine)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [feedPostIdsKey, myBiz?.id])
+
   const openNotifications = () => {
     if (unread > 0) {
       toast(`You have ${unread} unread message${unread > 1 ? 's' : ''}`, 'info')
@@ -186,6 +238,36 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     const textMatch = !search || (p.content || '').toLowerCase().includes(searchLower) || b.name.toLowerCase().includes(searchLower)
     return industryOk && textMatch
   })
+
+  const onLikeFeedPost = async (postId: string) => {
+    if (!myBiz) {
+      toast('Create a business profile first', 'info')
+      return
+    }
+    if (likedPostIds.has(postId)) {
+      toast('You already liked this post', 'info')
+      return
+    }
+    if (likingPostIds.has(postId)) return
+    setLikingPostIds((prev) => new Set([...prev, postId]))
+    const { error } = await sb.from('post_likes').insert({ post_id: postId, business_id: myBiz.id })
+    setLikingPostIds((prev) => {
+      const next = new Set(prev)
+      next.delete(postId)
+      return next
+    })
+    if (error) {
+      if (error.message.toLowerCase().includes('duplicate')) {
+        setLikedPostIds((prev) => new Set([...prev, postId]))
+        toast('You already liked this post', 'info')
+        return
+      }
+      toast('Failed to like post: ' + error.message, 'error')
+      return
+    }
+    setLikedPostIds((prev) => new Set([...prev, postId]))
+    setLikesByPostId((prev) => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }))
+  }
 
   const doSave = async (b: Business) => {
     if (!user) { toast('Sign in to save', 'info'); return }
@@ -288,8 +370,8 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
               ) : (
                 <div style={{ padding:'0 16px', marginBottom:14 }}>
                   {connectionFeedPosts.map(p => {
-                    const b = bizById.get(p.business_id)
-                    const isOwn = p.business_id === myBiz.id
+                    const b = bizById.get(normalizeUuid(p.business_id))
+                    const isOwn = myBiz ? normalizeUuid(p.business_id) === normalizeUuid(myBiz.id) : false
                     const bizName = b ? cleanDisplayText(b.name) || 'Business' : 'Business'
                     const logoSrc = b ? (normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)) : null
                     return (
@@ -312,6 +394,26 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                         ) : (
                           <img src={p.media_url} alt="" style={{ width:'100%', borderRadius:10, maxHeight:240, marginTop:10, objectFit:'cover' as const }} />
                         ))}
+                        <div style={{ display:'flex', gap:8, marginTop:10, paddingTop:8, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
+                          <button
+                            type="button"
+                            onClick={() => onLikeFeedPost(p.id)}
+                            disabled={likedPostIds.has(p.id) || likingPostIds.has(p.id)}
+                            style={{
+                              flex:1,
+                              padding:'6px 0',
+                              background: likedPostIds.has(p.id) ? 'rgba(30,126,247,0.2)' : '#0A1628',
+                              border:'1px solid rgba(255,255,255,0.07)',
+                              borderRadius:9,
+                              color: likedPostIds.has(p.id) ? '#1E7EF7' : '#7A92B0',
+                              fontSize:12,
+                              fontWeight:600,
+                              cursor: likedPostIds.has(p.id) ? 'default' : 'pointer',
+                            }}
+                          >
+                            {likedPostIds.has(p.id) ? 'Liked' : likingPostIds.has(p.id) ? 'Liking…' : 'Like'} {likesByPostId[p.id] ?? 0}
+                          </button>
+                        </div>
                       </div>
                     )
                   })}
