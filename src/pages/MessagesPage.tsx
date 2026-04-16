@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed } from '../lib/db'
+import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useBusinessOnlineMap } from '../lib/presence'
 import { sendPushNotification } from '../lib/push'
@@ -50,6 +50,7 @@ function fallbackPeer(othId: string): Business {
     followers: 0,
     created_at: '',
     updated_at: '',
+    _peer_placeholder: true,
   }
 }
 
@@ -155,8 +156,8 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
 
       const msgLimit = Math.min(5000, Math.max(400, chatIds.length * 100))
 
-      const [peersRes, unreadRes, recentMsgsRes] = await Promise.all([
-        sb.from('businesses').select(CHAT_PEER_SELECT).in('id', othIds),
+      const [peerRows, unreadRes, recentMsgsRes] = await Promise.all([
+        fetchBusinessProfilesByIds(CHAT_PEER_SELECT, othIds),
         sb.from('messages').select('chat_id').in('chat_id', chatIds).neq('sender_id', myBiz.id).eq('read', false),
         sb
           .from('messages')
@@ -166,11 +167,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
           .limit(msgLimit),
       ])
 
-      if (peersRes.error) {
-        console.warn('loadChats peers:', peersRes.error.message)
-      }
-
-      const peerById = new Map((peersRes.data || []).map((p: Business) => [p.id, p]))
+      const peerById = new Map(peerRows.map((p: Business) => [p.id, p]))
       const unreadByChat = new Map<string, number>()
       for (const r of unreadRes.data || []) {
         const cid = (r as { chat_id: string }).chat_id
@@ -444,7 +441,8 @@ function ChatView({
   }, [chatId])
 
   useEffect(() => {
-    if (other || !chatId || !myBiz) return
+    const needPeer = !other || other._peer_placeholder === true
+    if (!needPeer || !chatId || !myBiz) return
     let cancelled = false
     void (async () => {
       const { data: row } = await sb.from('chats').select('participant_a,participant_b').eq('id', chatId).single()
@@ -458,9 +456,10 @@ function ChatView({
     return () => {
       cancelled = true
     }
-  }, [chatId, myBiz.id, other?.id])
+  }, [chatId, myBiz.id, other?.id, other?._peer_placeholder])
 
-  const displayOther = other ?? fetchedOther
+  const displayOther =
+    other && !other._peer_placeholder ? other : (fetchedOther ?? other)
 
   useEffect(() => {
     const id = displayOther?.id

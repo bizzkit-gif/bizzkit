@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal } from '../lib/db'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal, fetchBusinessProfilesByIds } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { sendPushNotification } from '../lib/push'
 import { useApp } from '../context/ctx'
@@ -113,8 +113,8 @@ useEffect(() => {
     if (error || !connRows?.length) { setConnections([]); return }
     const ids = Array.from(new Set(connRows.map(c => (c.from_biz_id === biz.id ? c.to_biz_id : c.from_biz_id)).filter((id: string) => id && id !== biz.id)))
     if (!ids.length) { setConnections([]); return }
-    const { data: connBiz } = await sb.from('businesses').select(CONNECTIONS_CARD_SELECT).in('id', ids)
-    setConnections(connBiz || [])
+    const connBiz = await fetchBusinessProfilesByIds(CONNECTIONS_CARD_SELECT, ids)
+    setConnections(connBiz)
   }
   loadConnections()
 }, [biz?.id])
@@ -777,8 +777,8 @@ useEffect(() => {
       if (!cancelled) setConnections([])
       return
     }
-    const { data: connBiz } = await sb.from('businesses').select(CONNECTIONS_CARD_SELECT).in('id', ids)
-    if (!cancelled) setConnections(connBiz || [])
+    const connBiz = await fetchBusinessProfilesByIds(CONNECTIONS_CARD_SELECT, ids)
+    if (!cancelled) setConnections(connBiz)
   })()
   return () => {
     cancelled = true

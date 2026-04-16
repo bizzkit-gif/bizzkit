@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { sb, Business, INDUSTRIES, grad, fmtDate } from '../lib/db'
+import { sb, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 /** Narrow columns + product fields — faster than `*,products(*)`. */
@@ -83,9 +83,6 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       ])
 
       if (!active) return
-      const nextList = (businesses || []).filter(b => b.id !== ownBizId) as Business[]
-      setList(nextList)
-      setSaved(new Set((savedRows || []).map((s: any) => s.business_id)))
       const connIds = new Set<string>()
       ;((connsRes.data as any[]) || []).forEach((c: any) => {
         const otherId = c.from_biz_id === ownBizId ? c.to_biz_id : c.from_biz_id
@@ -95,6 +92,15 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         const otherId = c.participant_a === ownBizId ? c.participant_b : c.participant_a
         if (otherId && otherId !== ownBizId) connIds.add(otherId)
       })
+      let nextList = (businesses || []).filter(b => b.id !== ownBizId) as Business[]
+      const inFeed = new Set(nextList.map((b) => b.id))
+      const missingConn = [...connIds].filter((id) => id && id !== ownBizId && !inFeed.has(id))
+      if (missingConn.length) {
+        const extra = await fetchBusinessProfilesByIds(FEED_BUSINESS_SELECT, missingConn)
+        nextList = [...nextList, ...extra.filter((b) => b.id !== ownBizId)]
+      }
+      setList(nextList)
+      setSaved(new Set((savedRows || []).map((s: any) => s.business_id)))
       setConns(connIds)
       setLoading(false)
       try {

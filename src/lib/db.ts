@@ -194,6 +194,8 @@ export type Business = {
   kyc_verified: boolean; certified: boolean
   trust_score: number; trust_tier: string; followers: number
   created_at: string; updated_at: string
+  /** Set when peer row was not loaded yet — ChatView should fetch by id */
+  _peer_placeholder?: boolean
   /** Reserved for future use; not used while session alerts are email-only */
   phone_whatsapp?: string | null
   notify_session_invite_email?: boolean
@@ -206,6 +208,39 @@ export type Business = {
 export type Product = {
   id: string; business_id: string; name: string
   price: string; emoji: string; category: string
+}
+
+const BUSINESS_IN_CHUNK = 100
+
+/**
+ * Load `businesses` rows by id (chunked for large lists / URL limits).
+ * Fills gaps with per-id lookups when batch `.in()` misses rows.
+ */
+export async function fetchBusinessProfilesByIds(select: string, ids: string[]): Promise<Business[]> {
+  const unique = [...new Set(ids.filter(Boolean))]
+  if (!unique.length) return []
+  const byId = new Map<string, Business>()
+  for (let i = 0; i < unique.length; i += BUSINESS_IN_CHUNK) {
+    const chunk = unique.slice(i, i + BUSINESS_IN_CHUNK)
+    const { data, error } = await sb.from('businesses').select(select).in('id', chunk)
+    if (error) {
+      console.warn('fetchBusinessProfilesByIds batch:', error.message)
+      continue
+    }
+    for (const row of (data || []) as Business[]) {
+      if (row?.id) byId.set(row.id, row)
+    }
+  }
+  const missing = unique.filter((id) => !byId.has(id))
+  if (!missing.length) return Array.from(byId.values())
+  const singles = await Promise.all(
+    missing.map((id) => sb.from('businesses').select(select).eq('id', id).maybeSingle()),
+  )
+  for (const r of singles) {
+    const row = r.data as Business | null
+    if (row?.id) byId.set(row.id, row)
+  }
+  return unique.map((id) => byId.get(id)).filter((b): b is Business => !!b)
 }
 
 export type Conference = {
