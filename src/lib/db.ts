@@ -1,8 +1,10 @@
 import { createClient } from '@supabase/supabase-js'
 
 // Keys hardcoded - no .env file needed
-const SUPABASE_URL = 'https://ganberetmowmaidioryu.supabase.co'
+export const SUPABASE_URL = 'https://ganberetmowmaidioryu.supabase.co'
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhbmJlcmV0bW93bWFpZGlvcnl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTg5MzksImV4cCI6MjA4OTQ3NDkzOX0.5-mD0cFberNXOmSh8F0lItV6wbTJE0zHjCiPFAYfExE'
+/** Same as Supabase anon key — used for invoking Edge Functions from the browser. */
+export const SUPABASE_ANON_KEY = SUPABASE_KEY
 
 const AUTH_STORAGE_MODE_KEY = 'bizzkit.auth.storageMode'
 
@@ -192,6 +194,12 @@ export type Business = {
   kyc_verified: boolean; certified: boolean
   trust_score: number; trust_tier: string; followers: number
   created_at: string; updated_at: string
+  /** Reserved for future use; not used while session alerts are email-only */
+  phone_whatsapp?: string | null
+  notify_session_invite_email?: boolean
+  notify_session_invite_whatsapp?: boolean
+  /** When true, session start reminders are also sent by email (in addition to chat) */
+  notify_session_calendar_reminders?: boolean
   products?: Product[]
 }
 
@@ -213,6 +221,41 @@ export const CONFERENCE_SESSION_INVITE_MARKER = '[CONF_SESSION_INVITE]'
 export function conferenceSessionInviteMessage(inviterName: string, conf: Conference): string {
   const head = `${CONFERENCE_SESSION_INVITE_MARKER}:${conf.id}`
   return `${head} ${inviterName} invited you to join "${conf.title}" on ${fmtDate(conf.date)} at ${conf.time}. Open Connect → Conferences to find and join this session.`
+}
+
+export type SessionExternalNotifyKind = 'invite' | 'reminder'
+
+/** Triggers session emails (per recipient profile settings) via Edge Function `session-external-notify`. */
+export async function notifySessionExternal(
+  conferenceId: string,
+  recipientBusinessId: string,
+  senderBusinessId: string,
+  kind: SessionExternalNotifyKind,
+): Promise<void> {
+  try {
+    const { data: { session } } = await sb.auth.getSession()
+    if (!session?.access_token) return
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/session-external-notify`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        conferenceId,
+        recipientBusinessId,
+        senderBusinessId,
+        kind,
+      }),
+    })
+    if (!res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { error?: string }
+      console.warn('session-external-notify', res.status, j?.error ?? res.statusText)
+    }
+  } catch (e) {
+    console.warn('notifySessionExternal', e)
+  }
 }
 
 export type Chat = {

@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage } from '../lib/db'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { sendPushNotification } from '../lib/push'
 import { useApp } from '../context/ctx'
+import { openReportProblem } from '../lib/reportProblem'
+import { vibrateIfEnabled } from '../lib/notificationSettings'
 
 const GRADS = ['gr1','gr2','gr3','gr4','gr5','gr6','gr7','gr8']
 const normalizeLogoImage = (value?: string | null): string | null => {
@@ -198,6 +200,41 @@ return (
     >
       Privacy & Terms
     </button>
+    <button
+      type="button"
+      onClick={() => {
+        setPrevTab('profile')
+        setAppTab('notifications')
+      }}
+      style={{
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        fontSize: 11,
+        color: '#3A5070',
+        fontWeight: 600,
+        cursor: 'pointer',
+        textDecoration: 'underline',
+      }}
+    >
+      Notification settings
+    </button>
+    <button
+      type="button"
+      onClick={() => openReportProblem(user?.id)}
+      style={{
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        fontSize: 11,
+        color: '#3A5070',
+        fontWeight: 600,
+        cursor: 'pointer',
+        textDecoration: 'underline',
+      }}
+    >
+      Report a problem
+    </button>
   </div>
 )}
 </div>
@@ -353,6 +390,8 @@ const [city, setCity] = useState(existing?.city||'')
 const [country, setCountry] = useState(existing?.country||'')
 const [website, setWebsite] = useState(existing?.website||'')
 const [founded, setFounded] = useState(existing?.founded||'')
+const [notifyInviteEmail, setNotifyInviteEmail] = useState(existing?.notify_session_invite_email !== false)
+const [notifyCalendarReminders, setNotifyCalendarReminders] = useState(existing?.notify_session_calendar_reminders !== false)
 const [err, setErr] = useState('')
 const [saving, setSaving] = useState(false)
 const [uploading, setUploading] = useState(false)
@@ -439,7 +478,13 @@ setErr(''); return true
 const save = async () => {
 if (!validate() || !user) return
 setSaving(true)
-const data = { owner_id:user.id, name:name.trim(), tagline:tagline.trim(), description:desc.trim(), industry:ind, type, city:city.trim(), country, website:website.trim(), founded:founded.trim(), logo:logoUrl||lgo, grad:GRADS[0], trust_score:existing?.trust_score||45, trust_tier:existing?.trust_tier||'Bronze', kyc_verified:existing?.kyc_verified||false, certified:existing?.certified||false }
+const data = {
+  owner_id:user.id, name:name.trim(), tagline:tagline.trim(), description:desc.trim(), industry:ind, type, city:city.trim(), country, website:website.trim(), founded:founded.trim(), logo:logoUrl||lgo, grad:GRADS[0], trust_score:existing?.trust_score||45, trust_tier:existing?.trust_tier||'Bronze', kyc_verified:existing?.kyc_verified||false, certified:existing?.certified||false,
+  phone_whatsapp: null,
+  notify_session_invite_email: notifyInviteEmail,
+  notify_session_invite_whatsapp: false,
+  notify_session_calendar_reminders: notifyCalendarReminders,
+}
 if (existing) {
 const { error } = await sb.from('businesses').update(data).eq('id', existing.id)
 if (error) { setSaving(false); setErr(error.message); toast('Failed to save profile', 'error'); return }
@@ -489,6 +534,16 @@ return (
 <div className="field"><label>Website</label><input placeholder="yoursite.com" value={website} onChange={e => setWebsite(e.target.value)} /></div>
 <div className="field"><label>Founded</label><input placeholder="2020" value={founded} onChange={e => setFounded(e.target.value)} /></div>
 </div>
+<div style={{ fontSize:12, fontWeight:700, color:'#7A92B0', margin:'14px 0 8px' }}>Session notifications</div>
+<label style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10, cursor:'pointer', fontSize:13 }}>
+  <input type="checkbox" checked={notifyInviteEmail} onChange={e => setNotifyInviteEmail(e.target.checked)} />
+  Email me when someone invites me to a session
+</label>
+<label style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4, cursor:'pointer', fontSize:13 }}>
+  <input type="checkbox" checked={notifyCalendarReminders} onChange={e => setNotifyCalendarReminders(e.target.checked)} />
+  Calendar reminders: email before sessions I joined
+</label>
+<div style={{ fontSize:10, color:'#7A92B0', lineHeight:1.45, marginBottom:4 }}>In-app chat always works; email uses your account login email.</div>
 {err && <div className="form-err">{err}</div>}
 <div style={{ height:92 }} />
 </div>
@@ -622,6 +677,7 @@ const sendSessionInviteToConnection = async (conf: Conference, targetBizId: stri
     text: conferenceSessionInviteMessage(myBiz.name, conf),
   })
   if (error) return { ok: false as const, error: error.message }
+  void notifySessionExternal(conf.id, targetBizId, myBiz.id, 'invite')
   return { ok: true as const }
 }
 
@@ -637,7 +693,10 @@ const sendConferenceNotice = async (c: Conference, kind: 'MISSED'|'REMINDER') =>
     const text = kind === 'MISSED'
       ? `${marker} You missed the conference "${c.title}" scheduled on ${fmtDate(c.date)} at ${c.time}.`
       : `${marker} Reminder: "${c.title}" starts soon at ${c.time}. Please join on time.`
-    await sb.from('messages').insert({ chat_id:chatId, sender_id:myBiz.id, text })
+    const { error } = await sb.from('messages').insert({ chat_id:chatId, sender_id:myBiz.id, text })
+    if (!error && kind === 'REMINDER') {
+      void notifySessionExternal(c.id, attendeeId, myBiz.id, 'reminder')
+    }
   }
 }
 
@@ -701,7 +760,7 @@ return (
     <div style={{ padding:'14px 16px', borderBottom:'1px solid rgba(255,255,255,0.07)', display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
       <div>
         <div style={{ fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:15 }}>Invite connections</div>
-        <div style={{ fontSize:11, color:'#7A92B0', marginTop:4, lineHeight:1.35 }}>Send a chat message to your connected businesses with a link to this session.</div>
+        <div style={{ fontSize:11, color:'#7A92B0', marginTop:4, lineHeight:1.35 }}>Sends in-app chat plus email (each business chooses in Profile).</div>
       </div>
       <button type="button" onClick={() => setInviteModalConf(null)} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:22, cursor:'pointer', lineHeight:1, flexShrink:0 }} aria-label="Close">×</button>
     </div>
@@ -1241,7 +1300,7 @@ useEffect(() => {
   }
   if (callAlertTimerRef.current) window.clearInterval(callAlertTimerRef.current)
   callAlertTimerRef.current = window.setInterval(() => {
-    if (navigator.vibrate) navigator.vibrate(120)
+    vibrateIfEnabled(120)
   }, 1800)
   return () => {
     if (callAlertTimerRef.current) {

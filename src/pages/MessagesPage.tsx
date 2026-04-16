@@ -3,6 +3,7 @@ import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useBusinessOnlineMap } from '../lib/presence'
 import { sendPushNotification } from '../lib/push'
+import { vibrateIfEnabled } from '../lib/notificationSettings'
 import { useApp } from '../context/ctx'
 
 const normalizeLogoImage = (value?: string | null): string | null => {
@@ -171,7 +172,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
     }
     if (callAlertTimerRef.current) window.clearInterval(callAlertTimerRef.current)
     callAlertTimerRef.current = window.setInterval(() => {
-      if (navigator.vibrate) navigator.vibrate(120)
+      vibrateIfEnabled(120)
     }, 1800)
     return () => {
       if (callAlertTimerRef.current) {

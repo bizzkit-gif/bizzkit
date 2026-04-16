@@ -1,4 +1,5 @@
 import { sb } from './db'
+import { getNotificationSettings } from './notificationSettings'
 
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4)
@@ -28,6 +29,16 @@ export async function ensurePushSubscription(businessId: string): Promise<void> 
   const reg = (await navigator.serviceWorker.getRegistration()) || (await registerServiceWorker())
   if (!reg) return
   await navigator.serviceWorker.ready
+
+  if (!getNotificationSettings().pushRemote) {
+    try {
+      const existing = await reg.pushManager.getSubscription()
+      if (existing) await existing.unsubscribe()
+    } catch {
+      /* ignore */
+    }
+    return
+  }
 
   let permission = Notification.permission
   if (permission === 'default') {

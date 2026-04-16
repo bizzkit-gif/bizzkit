@@ -1,0 +1,25 @@
+You are working on Bizzkit — a B2B and D2C business showcase and networking platform (like Instagram for businesses).
+
+Tech stack:
+- Frontend: React, TypeScript, Vite
+- Backend/DB: Supabase (PostgreSQL + Auth + Storage)
+- Deployment: Vercel
+- Supabase project: https://ganberetmowmaidioryu.supabase.co
+- DB client: src/lib/db.ts
+
+Key features already built:
+- Auth (login/signup/password reset)
+- Business profiles with products/services
+- Feed with search and filters
+- Real-time messaging
+- Notifications centre
+- Conference booking
+- Go Random speed networking
+- Trust Score / KYC system
+
+Coding rules:
+- Always use TypeScript with proper types, no 'any'
+- Use existing Supabase client from src/lib/db.ts, never create a new one
+- Keep components modular and reusable
+- When fixing bugs, return only the changed file content
+- Mobile-first, must work on iOS Safari

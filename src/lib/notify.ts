@@ -1,3 +1,5 @@
+import { shouldPlayTone, shouldShowBackgroundBanner } from './notificationSettings'
+
 type ToneKind = 'message' | 'call' | 'alert'
 
 let audioCtx: AudioContext | null = null
@@ -72,6 +74,7 @@ async function playTones(kind: ToneKind): Promise<void> {
  * On iOS, audio unlocks after the user has interacted with the page once (`primeNotificationAudio`).
  */
 export function playNotificationTone(kind: ToneKind): void {
+  if (!shouldPlayTone(kind)) return
   void playTones(kind).catch(() => {})
 }
 
@@ -94,6 +97,7 @@ export function syncAppIconBadge(count: number): void {
 
 export async function tryShowNativeNotification(title: string, body: string, tag: string): Promise<void> {
   if (typeof window === 'undefined' || !('Notification' in window)) return
+  if (!shouldShowBackgroundBanner()) return
   if (document.visibilityState === 'visible') return
   if (Notification.permission === 'default') {
     try {

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { sb, Business, RANDOM_CALL_INVITE_MARKER, CHAT_CALL_INVITE_MARKER } from '../lib/db'
 import { setEmailHasProfile, clearEmailHasProfile } from '../lib/profileLocal'
 import { playNotificationTone, syncAppIconBadge, tryShowNativeNotification } from '../lib/notify'
+import { vibrateIfEnabled } from '../lib/notificationSettings'
 import { ensurePushSubscription } from '../lib/push'
 
 type ToastType = 'success' | 'error' | 'info'
@@ -106,7 +107,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setPendingChatCallFromBusinessId(row.sender_id)
     setChatWith(row.sender_id)
     playNotificationTone('call')
-    if (navigator.vibrate) navigator.vibrate([220, 120, 220, 120, 220, 120, 220])
+    vibrateIfEnabled([220, 120, 220, 120, 220, 120, 220])
     void tryShowNativeNotification('Incoming Chat Call', 'Open Chat to answer the call.', 'chat-call')
     toast('📞 Incoming Chat call — opening Chat to answer', 'info', 5200)
     setTab('messages')
@@ -123,7 +124,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (row.id) lastRandomInviteMsgIdRef.current = row.id
     setPendingRandomCallFromBusinessId(row.sender_id)
     playNotificationTone('call')
-    if (navigator.vibrate) navigator.vibrate([220, 120, 220, 120, 220, 120, 220])
+    vibrateIfEnabled([220, 120, 220, 120, 220, 120, 220])
     void tryShowNativeNotification('Incoming Random Call', 'Open Random to answer the call.', 'random-call')
     toast('📞 Incoming Random call — tap Random to answer', 'info', 5200)
     setTab('random')
@@ -210,7 +211,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // Sound for every incoming DM (not only when unread count increases — avoids missing a ping while in-thread).
       playNotificationTone('message')
       void tryShowNativeNotification('New message', 'You received a new chat message.', 'chat-message')
-      if (navigator.vibrate) navigator.vibrate([120, 60, 120])
+      vibrateIfEnabled([120, 60, 120])
       if (tab !== 'messages') toast('New message received 💬', 'info')
     }
 
@@ -236,7 +237,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         playNotificationTone('alert')
         void tryShowNativeNotification('Missed call', 'A call was missed or ended.', 'missed-call')
         toast('Chat call missed or ended', 'info', 3600)
-        if (navigator.vibrate) navigator.vibrate([100, 80, 100])
+        vibrateIfEnabled([100, 80, 100])
       }
       await refreshUnread()
     }
@@ -312,7 +313,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!myBiz?.id) return
-    void ensurePushSubscription(myBiz.id)
+    const id = myBiz.id
+    const run = () => void ensurePushSubscription(id)
+    run()
+    window.addEventListener('bizzkit-notification-settings', run)
+    return () => window.removeEventListener('bizzkit-notification-settings', run)
   }, [myBiz?.id])
 
   return (
