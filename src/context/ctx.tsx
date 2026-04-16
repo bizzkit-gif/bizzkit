@@ -134,7 +134,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!user) return null
     const em = user.email ? String(user.email).toLowerCase().trim() : ''
     try {
-      const { data } = await sb.from('businesses').select('*,products(*)').eq('owner_id', user.id).single()
+      const { data } = await sb
+        .from('businesses')
+        .select('*,products(id,name,emoji,price,category)')
+        .eq('owner_id', user.id)
+        .single()
       const nextBiz = data || null
       setMyBiz(nextBiz)
       if (em) {

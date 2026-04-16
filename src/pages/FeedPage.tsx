@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { sb, Business, INDUSTRIES, grad, fmtDate } from '../lib/db'
 import { useApp } from '../context/ctx'
 
+/** Narrow columns + product fields — faster than `*,products(*)`. */
+const FEED_BUSINESS_SELECT =
+  'id,name,tagline,industry,city,country,type,logo,logo_url,kyc_verified,trust_score,products(id,name,emoji,price,category)'
+
+const FEED_CACHE_PREFIX = 'bizzkit.feed.v1.'
+const FEED_CACHE_MS = 120_000
+
 const normalizeLogoImage = (value?: string | null): string | null => {
   if (!value) return null
   let v = value.trim()
@@ -45,22 +52,39 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   useEffect(() => {
     let active = true
     const loadFeedData = async () => {
-      setLoading(true)
       let ownBizId = myBiz?.id || null
       if (!ownBizId && user?.id) {
         const { data: ownBiz } = await sb.from('businesses').select('id').eq('owner_id', user.id).single()
         ownBizId = ownBiz?.id || null
       }
 
+      const cacheKey = `${FEED_CACHE_PREFIX}${user?.id ?? 'anon'}:${ownBizId ?? 'none'}`
+      let usedCache = false
+      try {
+        const raw = sessionStorage.getItem(cacheKey)
+        if (raw) {
+          const parsed = JSON.parse(raw) as { t: number; rows: Business[] }
+          if (Date.now() - parsed.t < FEED_CACHE_MS && parsed.rows?.length && active) {
+            setList(parsed.rows)
+            usedCache = true
+            setLoading(false)
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      if (!usedCache) setLoading(true)
+
       const [{ data: businesses }, { data: savedRows }, connsRes, chatsRes] = await Promise.all([
-        sb.from('businesses').select('*,products(*)').order('trust_score', { ascending: false }),
+        sb.from('businesses').select(FEED_BUSINESS_SELECT).order('trust_score', { ascending: false }),
         user?.id ? sb.from('saved_businesses').select('business_id').eq('user_id', user.id) : Promise.resolve({ data: [] as any[] }),
         ownBizId ? sb.from('connections').select('from_biz_id,to_biz_id').or(`from_biz_id.eq.${ownBizId},to_biz_id.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] }),
         ownBizId ? sb.from('chats').select('participant_a,participant_b').or(`participant_a.eq.${ownBizId},participant_b.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] })
       ])
 
       if (!active) return
-      setList((businesses || []).filter(b => b.id !== ownBizId))
+      const nextList = (businesses || []).filter(b => b.id !== ownBizId) as Business[]
+      setList(nextList)
       setSaved(new Set((savedRows || []).map((s: any) => s.business_id)))
       const connIds = new Set<string>()
       ;((connsRes.data as any[]) || []).forEach((c: any) => {
@@ -73,6 +97,11 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       })
       setConns(connIds)
       setLoading(false)
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({ t: Date.now(), rows: nextList }))
+      } catch {
+        /* quota / private mode */
+      }
     }
 
     loadFeedData()

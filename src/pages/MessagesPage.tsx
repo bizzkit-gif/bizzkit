@@ -20,6 +20,9 @@ const normalizeLogoImage = (value?: string | null): string | null => {
 
 const logoInitials = (name?: string) => (name || '').split(' ').slice(0,2).map(w => w[0] || '').join('').toUpperCase() || 'BK'
 
+/** List row only — avoids N+1 `businesses` + `messages` round-trips per chat. */
+const CHAT_PEER_SELECT = 'id,name,logo,logo_url,industry,city'
+
 function isValidChatMsg(m: unknown): m is Msg {
   if (!m || typeof m !== 'object') return false
   const o = m as Record<string, unknown>
@@ -100,22 +103,67 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
 
   const loadChats = useCallback(async () => {
     if (!myBiz) return
-    const { data } = await sb.from('chats').select('*').or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
-    if (!data) { setLoading(false); return }
-    const enriched: Chat[] = await Promise.all(data.map(async (c: any) => {
+    const { data: rows } = await sb
+      .from('chats')
+      .select('id,participant_a,participant_b,created_at')
+      .or(`participant_a.eq.${myBiz.id},participant_b.eq.${myBiz.id}`)
+    if (!rows?.length) {
+      setChats([])
+      setUnread(0)
+      setLoading(false)
+      return
+    }
+
+    const chatIds = rows.map((c) => c.id)
+    const othIds = [...new Set(rows.map((c: { participant_a: string; participant_b: string }) => (c.participant_a === myBiz.id ? c.participant_b : c.participant_a)))]
+
+    const msgLimit = Math.min(5000, Math.max(400, chatIds.length * 100))
+
+    const [peersRes, unreadRes, recentMsgsRes] = await Promise.all([
+      sb.from('businesses').select(CHAT_PEER_SELECT).in('id', othIds),
+      sb.from('messages').select('chat_id').in('chat_id', chatIds).neq('sender_id', myBiz.id).eq('read', false),
+      sb
+        .from('messages')
+        .select('chat_id,sender_id,text,created_at')
+        .in('chat_id', chatIds)
+        .order('created_at', { ascending: false })
+        .limit(msgLimit),
+    ])
+
+    const peerById = new Map((peersRes.data || []).map((p: Business) => [p.id, p]))
+    const unreadByChat = new Map<string, number>()
+    for (const r of unreadRes.data || []) {
+      const cid = (r as { chat_id: string }).chat_id
+      unreadByChat.set(cid, (unreadByChat.get(cid) || 0) + 1)
+    }
+
+    const lastByChat = new Map<string, { text: string; created_at: string }>()
+    for (const m of recentMsgsRes.data || []) {
+      const row = m as { chat_id: string; text: string | null; created_at: string }
+      if (!lastByChat.has(row.chat_id)) {
+        lastByChat.set(row.chat_id, { text: row.text ?? '', created_at: row.created_at })
+      }
+    }
+
+    const enriched: Chat[] = rows.map((c: { id: string; participant_a: string; participant_b: string; created_at: string }) => {
       const othId = c.participant_a === myBiz.id ? c.participant_b : c.participant_a
-      const { data: other } = await sb.from('businesses').select('*').eq('id', othId).single()
-      const { data: msgs } = await sb.from('messages').select('*').eq('chat_id', c.id).order('created_at', { ascending: false }).limit(1)
-      const { count } = await sb.from('messages').select('*', { count:'exact', head:true }).eq('chat_id', c.id).neq('sender_id', myBiz.id).eq('read', false)
-      return { ...c, other_biz: other, last_msg: msgs?.[0]?.text, last_ts: msgs?.[0]?.created_at, unread: count||0 }
-    }))
+      const other = peerById.get(othId)
+      const last = lastByChat.get(c.id)
+      return {
+        ...c,
+        other_biz: other,
+        last_msg: last?.text,
+        last_ts: last?.created_at,
+        unread: unreadByChat.get(c.id) || 0,
+      }
+    })
     enriched.sort((a, b) =>
       String(b.last_ts || b.created_at || '').localeCompare(String(a.last_ts || a.created_at || ''))
     )
     setChats(enriched)
-    setUnread(enriched.reduce((s, c) => s + (c.unread||0), 0))
+    setUnread(enriched.reduce((s, c) => s + (c.unread || 0), 0))
     setLoading(false)
-  }, [myBiz?.id])
+  }, [myBiz?.id, setUnread])
 
   useEffect(() => { loadChats() }, [loadChats])
 

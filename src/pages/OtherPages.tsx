@@ -21,6 +21,13 @@ const normalizeLogoImage = (value?: string | null): string | null => {
 }
 const logoText = (name?: string) => getLogo(name || '')
 
+const PROFILE_POST_SELECT = 'id,business_id,content,media_url,media_type,created_at'
+const PROFILE_POSTS_CACHE_PREFIX = 'bizzkit.profile.posts.v1.'
+const PROFILE_POSTS_CACHE_MS = 120_000
+const CONNECTIONS_CARD_SELECT = 'id,name,industry,city,logo,logo_url'
+const CONF_CACHE_KEY = 'bizzkit.conferences.v1'
+const CONF_CACHE_MS = 90_000
+
 // ── PROFILE PAGE ─────────────────────────────────────────────────
 export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:string|null; onBack?:()=>void; onChat?:(id:string)=>void; onTrust?:()=>void }) {
 const { user, myBiz, refreshBiz, toast, setTab: setAppTab, setPrevTab } = useApp()
@@ -36,8 +43,6 @@ type BizPost = {
   likes?: number
   created_at: string
 }
-
-
 
 const [editing, setEditing] = useState(false)
 const [isConn, setIsConn] = useState(false)
@@ -55,21 +60,46 @@ const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set())
 
 useEffect(() => {
   if (!biz?.id || tab !== 'posts') return
+  const cacheKey = `${PROFILE_POSTS_CACHE_PREFIX}${biz.id}`
   const loadPostsAndLikes = async () => {
-    const { data: posts } = await sb.from('posts').select('*').eq('business_id', biz.id).order('created_at', { ascending:false })
+    try {
+      const raw = sessionStorage.getItem(cacheKey)
+      if (raw) {
+        const parsed = JSON.parse(raw) as { t: number; rows: BizPost[] }
+        if (Date.now() - parsed.t < PROFILE_POSTS_CACHE_MS && parsed.rows?.length) {
+          setBizPosts(parsed.rows)
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const { data: posts } = await sb
+      .from('posts')
+      .select(PROFILE_POST_SELECT)
+      .eq('business_id', biz.id)
+      .order('created_at', { ascending: false })
     const nextPosts = (posts || []) as BizPost[]
     setBizPosts(nextPosts)
-    if (!myBiz || !nextPosts.length) { setLikedPostIds(new Set()); return }
+    try {
+      sessionStorage.setItem(cacheKey, JSON.stringify({ t: Date.now(), rows: nextPosts }))
+    } catch {
+      /* quota */
+    }
+    if (!myBiz || !nextPosts.length) {
+      setLikedPostIds(new Set())
+      return
+    }
     const postIds = nextPosts.map((p) => p.id)
     const { data: likedRows } = await sb.from('post_likes').select('post_id').eq('business_id', myBiz.id).in('post_id', postIds)
     setLikedPostIds(new Set((likedRows || []).map((row: { post_id: string }) => row.post_id)))
   }
-  loadPostsAndLikes()
+  void loadPostsAndLikes()
 }, [biz?.id, tab, myBiz?.id])
 
 useEffect(() => {
 if (isOwn) { setBiz(myBiz); setLoading(false); return }
-sb.from('businesses').select('*,products(*)').eq('id', viewId!).single().then(({ data }) => { setBiz(data); setLoading(false) })
+sb.from('businesses').select('*,products(id,name,emoji,price,category)').eq('id', viewId!).single().then(({ data }) => { setBiz(data); setLoading(false) })
 if (myBiz && viewId) sb.from('connections').select('id').eq('from_biz_id', myBiz.id).eq('to_biz_id', viewId).single().then(({ data }) => setIsConn(!!data))
 }, [isOwn, viewId, myBiz])
 
@@ -83,7 +113,7 @@ useEffect(() => {
     if (error || !connRows?.length) { setConnections([]); return }
     const ids = Array.from(new Set(connRows.map(c => (c.from_biz_id === biz.id ? c.to_biz_id : c.from_biz_id)).filter((id: string) => id && id !== biz.id)))
     if (!ids.length) { setConnections([]); return }
-    const { data: connBiz } = await sb.from('businesses').select('*').in('id', ids)
+    const { data: connBiz } = await sb.from('businesses').select(CONNECTIONS_CARD_SELECT).in('id', ids)
     setConnections(connBiz || [])
   }
   loadConnections()
@@ -153,31 +183,141 @@ const logoRenderUrl = (() => {
     const { error } = await sb.from('posts').insert({ business_id:myBiz.id, content:postContent.trim(), media_url:postMedia||null, media_type:postMediaType||null })
     if (error) { toast('Failed to post: ' + error.message, 'error'); setPosting(false); return }
     setPostContent(''); setPostMedia(''); setPostMediaType('')
-    sb.from('posts').select('*').eq('business_id', myBiz.id).order('created_at', { ascending:false }).then(({ data }) => setBizPosts(data||[]))
+    sb.from('posts').select(PROFILE_POST_SELECT).eq('business_id', myBiz.id).order('created_at', { ascending:false }).then(({ data }) => {
+      const rows = (data || []) as BizPost[]
+      setBizPosts(rows)
+      try {
+        sessionStorage.setItem(`${PROFILE_POSTS_CACHE_PREFIX}${myBiz.id}`, JSON.stringify({ t: Date.now(), rows }))
+      } catch { /* ignore */ }
+    })
     setPosting(false)
     toast('Posted!')
   }
 
   const deletePost = async (postId: string) => {
     await sb.from('posts').delete().eq('id', postId)
-    setBizPosts((p:any[]) => p.filter((pp:any) => pp.id !== postId))
+    setBizPosts((p: BizPost[]) => {
+      const next = p.filter((pp) => pp.id !== postId)
+      if (biz?.id) {
+        try {
+          sessionStorage.setItem(`${PROFILE_POSTS_CACHE_PREFIX}${biz.id}`, JSON.stringify({ t: Date.now(), rows: next }))
+        } catch { /* ignore */ }
+      }
+      return next
+    })
   }
 
 return (
 <div style={{ paddingBottom:16 }}>
-<div style={{ padding:'16px 16px 0', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-        {onBack && <button onClick={onBack} style={{ width:32, height:32, borderRadius:10, background:'#152236', border:'none', color:'#fff', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>←</button>}
-        {isOwn && <button onClick={() => setEditing(true)} style={{ marginLeft:'auto', padding:'8px 16px', borderRadius:10, background:'#152236', border:'1px solid rgba(255,255,255,0.1)', color:'#fff', fontSize:12, fontWeight:700, cursor:'pointer' }}>✏️ Edit</button>}
-      </div>
-      <div style={{ padding:'0 16px' }}>
-<div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginTop:12 }}>
-{logoRenderUrl ? (
-<img src={logoRenderUrl} alt={biz.name} style={{ width:68, height:68, borderRadius:17, objectFit:'cover' as const, border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)' }} />
-) : (
-<div style={{ width:68, height:68, borderRadius:17, background:'linear-gradient(135deg,#1E7EF7,#6C63FF)', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:22, color:'#fff', border:'3px solid #0A1628', boxShadow:'0 6px 20px rgba(30,126,247,0.35)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{logoText(biz.name)}</div>
-)}
-{isOwn && (
-  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, marginBottom: 4 }}>
+      <div
+        style={{
+          padding: '16px 16px 0',
+          display: 'flex',
+          flexDirection: 'row',
+          justifyContent: isOwn ? 'space-between' : 'flex-start',
+          alignItems: 'flex-start',
+          gap: 12,
+          width: '100%',
+          boxSizing: 'border-box',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0, flex: '1 1 auto' }}>
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 10,
+                background: '#152236',
+                border: 'none',
+                color: '#fff',
+                fontSize: 18,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                alignSelf: 'flex-start',
+              }}
+            >
+              ←
+            </button>
+          )}
+          {logoRenderUrl ? (
+            <img
+              src={logoRenderUrl}
+              alt={biz.name}
+              style={{
+                width: 104,
+                height: 104,
+                borderRadius: 26,
+                objectFit: 'cover' as const,
+                border: '3px solid #0A1628',
+                boxShadow: '0 8px 28px rgba(30,126,247,0.4)',
+                flexShrink: 0,
+                display: 'block',
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: 104,
+                height: 104,
+                borderRadius: 26,
+                background: 'linear-gradient(135deg,#1E7EF7,#6C63FF)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontFamily: 'Syne, sans-serif',
+                fontWeight: 800,
+                fontSize: 34,
+                color: '#fff',
+                border: '3px solid #0A1628',
+                boxShadow: '0 8px 28px rgba(30,126,247,0.4)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                alignSelf: 'flex-start',
+              }}
+            >
+              {logoText(biz.name)}
+            </div>
+          )}
+        </div>
+        {isOwn && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
+              gap: 6,
+              flexShrink: 0,
+              alignSelf: 'flex-start',
+              maxWidth: '46%',
+              paddingTop: 0,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 10,
+                background: '#152236',
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: '#fff',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                margin: 0,
+                flexShrink: 0,
+              }}
+            >
+              ✏️ Edit
+            </button>
     <span style={{ fontSize: 11, color: '#1E7EF7', fontWeight: 700, cursor: 'pointer' }} onClick={onTrust}>
       Trust Score →
     </span>
@@ -235,10 +375,11 @@ return (
     >
       Report a problem
     </button>
-  </div>
-)}
-</div>
-<div style={{ marginTop:9 }}>
+          </div>
+        )}
+      </div>
+      <div style={{ padding:'0 16px' }}>
+<div style={{ marginTop:14 }}>
 <div style={{ fontFamily:'Syne, sans-serif', fontSize:19, fontWeight:800 }}>{biz.name}</div>
 <div style={{ fontSize:12.5, color:'#7A92B0', marginTop:3 }}>{biz.industry} · {biz.city}, {biz.country}</div>
 </div>
@@ -582,9 +723,30 @@ const [sendingInviteTo, setSendingInviteTo] = useState<string | null>(null)
 const [inviteAllBusy, setInviteAllBusy] = useState(false)
 
 const load = useCallback(async () => {
-const { data } = await sb.from('conferences').select('*,conference_attendees(business_id)').order('date', { ascending:true })
-setConfs(data||[])
-setLoading(false)
+  let usedCache = false
+  try {
+    const raw = sessionStorage.getItem(CONF_CACHE_KEY)
+    if (raw) {
+      const p = JSON.parse(raw) as { t: number; rows: Conference[] }
+      if (Date.now() - p.t < CONF_CACHE_MS && p.rows) {
+        setConfs(p.rows)
+        usedCache = true
+        setLoading(false)
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  if (!usedCache) setLoading(true)
+  const { data } = await sb.from('conferences').select('*,conference_attendees(business_id)').order('date', { ascending: true })
+  const next = data || []
+  setConfs(next)
+  setLoading(false)
+  try {
+    sessionStorage.setItem(CONF_CACHE_KEY, JSON.stringify({ t: Date.now(), rows: next }))
+  } catch {
+    /* ignore */
+  }
 }, [])
 
 useEffect(() => { load() }, [load])
@@ -615,7 +777,7 @@ useEffect(() => {
       if (!cancelled) setConnections([])
       return
     }
-    const { data: connBiz } = await sb.from('businesses').select('*').in('id', ids)
+    const { data: connBiz } = await sb.from('businesses').select(CONNECTIONS_CARD_SELECT).in('id', ids)
     if (!cancelled) setConnections(connBiz || [])
   })()
   return () => {
@@ -1209,9 +1371,13 @@ return (
 }
 
 // ── GO RANDOM ─────────────────────────────────────────────────────
+const RANDOM_POOL_SELECT =
+  'id,name,type,industry,city,country,kyc_verified,trust_score'
+
 export function GoRandomPage() {
 const { myBiz, toast, pendingRandomCallFromBusinessId, clearPendingRandomCall } = useApp()
 const [pool, setPool] = useState<Business[]>([])
+const [poolLoading, setPoolLoading] = useState(true)
 const [idx, setIdx] = useState(0)
 const [sessions, setSessions] = useState(0)
 const [connected, setConnected] = useState<Set<string>>(new Set())
@@ -1222,7 +1388,21 @@ const callAlertTimerRef = useRef<number | null>(null)
 
 useEffect(() => {
   if (!myBiz) return
-  sb.from('businesses').select('*').neq('id', myBiz.id).then(({ data }) => setPool(data || []))
+  let cancelled = false
+  setPoolLoading(true)
+  void sb
+    .from('businesses')
+    .select(RANDOM_POOL_SELECT)
+    .neq('id', myBiz.id)
+    .then(({ data, error }) => {
+      if (cancelled) return
+      setPool((data as Business[]) || [])
+      setPoolLoading(false)
+      if (error) console.warn('GoRandom pool:', error.message)
+    })
+  return () => {
+    cancelled = true
+  }
 }, [myBiz?.id])
 
 useEffect(() => {
@@ -1359,6 +1539,14 @@ const startRandomCall = async () => {
 }
 
 if (!myBiz) return <div className="empty"><div className="ico">🎲</div><h3>Go Random</h3><p>Create a business profile to start random video calls.</p></div>
+if (poolLoading) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'48px 16px', minHeight:220 }}>
+      <div className="spinner" />
+      <div style={{ marginTop:14, fontSize:12, color:'#7A92B0' }}>Finding businesses…</div>
+    </div>
+  )
+}
 if (!match) return <div className="empty"><div className="ico">🎲</div><h3>No businesses available</h3><p>Ask more businesses to join Bizzkit to start random calls.</p></div>
 if (activeCallWith) return <RandomCallRoom myBiz={myBiz} other={activeCallWith} onEnd={() => setActiveCallWith(null)} />
 
