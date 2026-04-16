@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal, fetchBusinessProfilesByIds } from '../lib/db'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal, fetchBusinessProfilesByIds, otherConnectionBusinessId, normalizeUuid } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { sendPushNotification } from '../lib/push'
 import { useApp } from '../context/ctx'
@@ -100,7 +100,22 @@ useEffect(() => {
 useEffect(() => {
 if (isOwn) { setBiz(myBiz); setLoading(false); return }
 sb.from('businesses').select('*,products(id,name,emoji,price,category)').eq('id', viewId!).single().then(({ data }) => { setBiz(data); setLoading(false) })
-if (myBiz && viewId) sb.from('connections').select('id').eq('from_biz_id', myBiz.id).eq('to_biz_id', viewId).single().then(({ data }) => setIsConn(!!data))
+if (myBiz && viewId) {
+  void sb
+    .from('connections')
+    .select('from_biz_id,to_biz_id')
+    .or(`from_biz_id.eq.${myBiz.id},to_biz_id.eq.${myBiz.id}`)
+    .then(({ data: rows }) => {
+      const a = normalizeUuid(myBiz.id)
+      const b = normalizeUuid(viewId)
+      const hit = (rows || []).some(
+        (r: { from_biz_id: string; to_biz_id: string }) =>
+          (normalizeUuid(r.from_biz_id) === a && normalizeUuid(r.to_biz_id) === b) ||
+          (normalizeUuid(r.from_biz_id) === b && normalizeUuid(r.to_biz_id) === a),
+      )
+      setIsConn(hit)
+    })
+}
 }, [isOwn, viewId, myBiz])
 
 useEffect(() => {
@@ -111,7 +126,13 @@ useEffect(() => {
       .select('from_biz_id,to_biz_id')
       .or(`from_biz_id.eq.${biz.id},to_biz_id.eq.${biz.id}`)
     if (error || !connRows?.length) { setConnections([]); return }
-    const ids = Array.from(new Set(connRows.map(c => (c.from_biz_id === biz.id ? c.to_biz_id : c.from_biz_id)).filter((id: string) => id && id !== biz.id)))
+    const ids = Array.from(
+      new Set(
+        connRows
+          .map((c) => otherConnectionBusinessId(c, biz.id))
+          .filter((id): id is string => !!id && normalizeUuid(id) !== normalizeUuid(biz.id)),
+      ),
+    )
     if (!ids.length) { setConnections([]); return }
     const connBiz = await fetchBusinessProfilesByIds(CONNECTIONS_CARD_SELECT, ids)
     setConnections(connBiz)
@@ -769,9 +790,9 @@ useEffect(() => {
     const ids = Array.from(
       new Set(
         connRows
-          .map((c) => (c.from_biz_id === myBiz.id ? c.to_biz_id : c.from_biz_id))
-          .filter((id: string) => id && id !== myBiz.id)
-      )
+          .map((c) => otherConnectionBusinessId(c, myBiz.id))
+          .filter((id): id is string => !!id && normalizeUuid(id) !== normalizeUuid(myBiz.id)),
+      ),
     )
     if (!ids.length) {
       if (!cancelled) setConnections([])
@@ -1412,9 +1433,9 @@ useEffect(() => {
     .or(`from_biz_id.eq.${myBiz.id},to_biz_id.eq.${myBiz.id}`)
     .then(({ data }) => {
       const ids = new Set<string>()
-      ;(data || []).forEach((c: any) => {
-        const otherId = c.from_biz_id === myBiz.id ? c.to_biz_id : c.from_biz_id
-        if (otherId && otherId !== myBiz.id) ids.add(otherId)
+      ;(data || []).forEach((c: { from_biz_id: string; to_biz_id: string }) => {
+        const otherId = otherConnectionBusinessId(c, myBiz.id)
+        if (otherId && normalizeUuid(otherId) !== normalizeUuid(myBiz.id)) ids.add(normalizeUuid(otherId))
       })
       setConnected(ids)
     })
@@ -1498,12 +1519,12 @@ const next = () => {
 }
 const connect = () => {
 if (!myBiz || !match) { toast('Create a profile first', 'info'); return }
-if (connected.has(match.id)) { toast('Already connected!', 'info'); return }
+if (connected.has(normalizeUuid(match.id))) { toast('Already connected!', 'info'); return }
 sb.from('connections').insert({ from_biz_id:myBiz.id, to_biz_id:match.id }).then(({ error }) => {
   if (error) {
     const msg = (error.message || '').toLowerCase()
     if (msg.includes('duplicate') || msg.includes('unique')) {
-      setConnected(s => new Set([...s, match.id]))
+      setConnected((s) => new Set([...s, normalizeUuid(match.id)]))
       toast('Already connected!', 'info')
       return
     }
@@ -1511,7 +1532,7 @@ sb.from('connections').insert({ from_biz_id:myBiz.id, to_biz_id:match.id }).then
     return
   }
   sb.rpc('get_or_create_chat', { biz_a:myBiz.id, biz_b:match.id }).then(() => {})
-  setConnected(s => new Set([...s, match.id]))
+  setConnected((s) => new Set([...s, normalizeUuid(match.id)]))
   toast('Connected with ' + match.name + '!')
 })
 }
@@ -1590,7 +1611,7 @@ return (
 </div>
 <div style={{ width:28, height:28, borderRadius:'50%', background:'#0A1628', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:9, fontWeight:800, color:'#7A92B0', flexShrink:0 }}>VS</div>
 <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:3, flex:1, minWidth:0 }}>
-<div style={{ width:48, height:48, borderRadius:'50%', background:'rgba(255,107,53,0.15)', border:'2px solid #FF6B35', display:'flex', alignItems:'center', justifyContent:'center', fontSize:20 }} className={!connected.has(match.id)?'pulse':''}>{logoText(match.name).slice(0,1)}</div>
+<div style={{ width:48, height:48, borderRadius:'50%', background:'rgba(255,107,53,0.15)', border:'2px solid #FF6B35', display:'flex', alignItems:'center', justifyContent:'center', fontSize:20 }} className={!connected.has(normalizeUuid(match.id))?'pulse':''}>{logoText(match.name).slice(0,1)}</div>
 <div style={{ fontFamily:'Syne, sans-serif', fontSize:10, fontWeight:700, textAlign:'center', maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{match.name}</div>
 <div style={{ fontSize:9.5, color:'#7A92B0', textAlign:'center', lineHeight:1.2 }}>{match.type} · {match.industry}</div>
 </div>
@@ -1618,7 +1639,7 @@ return (
 <button className="btn btn-green" style={{ flex:1.4, padding:'9px 8px', fontSize:12 }} onClick={startRandomCall}>Start Call</button>
 </div>
 <div style={{ padding:'0 12px', marginBottom:8 }}>
-<button className="btn btn-blue btn-full btn-sm" style={{ padding:'9px' }} onClick={connect} disabled={connected.has(match.id)}>{connected.has(match.id)?'✓ Connected':'Connect ✓'}</button>
+<button className="btn btn-blue btn-full btn-sm" style={{ padding:'9px' }} onClick={connect} disabled={connected.has(normalizeUuid(match.id))}>{connected.has(normalizeUuid(match.id))?'✓ Connected':'Connect ✓'}</button>
 </div>
 <div style={{ margin:'0 12px 10px', background:'#152236', borderRadius:10, padding:'8px 11px', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
 <div>

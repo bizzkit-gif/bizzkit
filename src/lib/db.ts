@@ -212,12 +212,44 @@ export type Product = {
 
 const BUSINESS_IN_CHUNK = 100
 
+/** Postgres UUIDs compare case-insensitively; JS string keys do not — normalize for Maps/Sets. */
+export function normalizeUuid(id: string | null | undefined): string {
+  if (id == null || id === '') return ''
+  return String(id).trim().toLowerCase()
+}
+
+/** The other business id in a 1:1 chat row (participant order + UUID casing vary). */
+export function otherChatParticipantId(
+  chat: { participant_a: string; participant_b: string },
+  myBizId: string,
+): string {
+  const a = normalizeUuid(chat.participant_a)
+  const b = normalizeUuid(chat.participant_b)
+  const m = normalizeUuid(myBizId)
+  if (a === m) return chat.participant_b
+  if (b === m) return chat.participant_a
+  return chat.participant_b
+}
+
+/** The other business id in a connections row (direction + UUID casing vary). */
+export function otherConnectionBusinessId(
+  row: { from_biz_id: string; to_biz_id: string },
+  myBizId: string,
+): string | null {
+  const f = normalizeUuid(row.from_biz_id)
+  const t = normalizeUuid(row.to_biz_id)
+  const m = normalizeUuid(myBizId)
+  if (f === m) return row.to_biz_id
+  if (t === m) return row.from_biz_id
+  return null
+}
+
 /**
  * Load `businesses` rows by id (chunked for large lists / URL limits).
  * Fills gaps with per-id lookups when batch `.in()` misses rows.
  */
 export async function fetchBusinessProfilesByIds(select: string, ids: string[]): Promise<Business[]> {
-  const unique = [...new Set(ids.filter(Boolean))]
+  const unique = [...new Set(ids.filter(Boolean).map((id) => normalizeUuid(id)).filter(Boolean))]
   if (!unique.length) return []
   const byId = new Map<string, Business>()
   for (let i = 0; i < unique.length; i += BUSINESS_IN_CHUNK) {
@@ -228,17 +260,17 @@ export async function fetchBusinessProfilesByIds(select: string, ids: string[]):
       continue
     }
     for (const row of (data || []) as Business[]) {
-      if (row?.id) byId.set(row.id, row)
+      if (row?.id) byId.set(normalizeUuid(row.id), row)
     }
   }
   const missing = unique.filter((id) => !byId.has(id))
-  if (!missing.length) return Array.from(byId.values())
+  if (!missing.length) return unique.map((id) => byId.get(id)).filter((b): b is Business => !!b)
   const singles = await Promise.all(
     missing.map((id) => sb.from('businesses').select(select).eq('id', id).maybeSingle()),
   )
   for (const r of singles) {
     const row = r.data as Business | null
-    if (row?.id) byId.set(row.id, row)
+    if (row?.id) byId.set(normalizeUuid(row.id), row)
   }
   return unique.map((id) => byId.get(id)).filter((b): b is Business => !!b)
 }

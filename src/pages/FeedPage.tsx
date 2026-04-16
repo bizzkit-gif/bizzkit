@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { sb, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds } from '../lib/db'
+import { sb, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 /** Narrow columns + product fields — faster than `*,products(*)`. */
@@ -85,19 +85,29 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       if (!active) return
       const connIds = new Set<string>()
       ;((connsRes.data as any[]) || []).forEach((c: any) => {
-        const otherId = c.from_biz_id === ownBizId ? c.to_biz_id : c.from_biz_id
-        if (otherId && otherId !== ownBizId) connIds.add(otherId)
+        if (!ownBizId) return
+        const otherId = otherConnectionBusinessId(
+          { from_biz_id: c.from_biz_id, to_biz_id: c.to_biz_id },
+          ownBizId,
+        )
+        if (otherId && normalizeUuid(otherId) !== normalizeUuid(ownBizId)) connIds.add(normalizeUuid(otherId))
       })
       ;((chatsRes.data as any[]) || []).forEach((c: any) => {
-        const otherId = c.participant_a === ownBizId ? c.participant_b : c.participant_a
-        if (otherId && otherId !== ownBizId) connIds.add(otherId)
+        if (!ownBizId) return
+        const otherId = otherChatParticipantId(
+          { participant_a: c.participant_a, participant_b: c.participant_b },
+          ownBizId,
+        )
+        if (otherId && normalizeUuid(otherId) !== normalizeUuid(ownBizId)) connIds.add(normalizeUuid(otherId))
       })
-      let nextList = (businesses || []).filter(b => b.id !== ownBizId) as Business[]
-      const inFeed = new Set(nextList.map((b) => b.id))
-      const missingConn = [...connIds].filter((id) => id && id !== ownBizId && !inFeed.has(id))
+      let nextList = (businesses || []).filter(
+        (b) => normalizeUuid(b.id) !== normalizeUuid(ownBizId || ''),
+      ) as Business[]
+      const inFeed = new Set(nextList.map((b) => normalizeUuid(b.id)))
+      const missingConn = [...connIds].filter((id) => id && !inFeed.has(id))
       if (missingConn.length) {
         const extra = await fetchBusinessProfilesByIds(FEED_BUSINESS_SELECT, missingConn)
-        nextList = [...nextList, ...extra.filter((b) => b.id !== ownBizId)]
+        nextList = [...nextList, ...extra.filter((b) => normalizeUuid(b.id) !== normalizeUuid(ownBizId || ''))]
       }
       setList(nextList)
       setSaved(new Set((savedRows || []).map((s: any) => s.business_id)))
@@ -150,8 +160,8 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     toast('No new notifications', 'info')
   }
 
-  const discoverBase = list.filter(b => !conns.has(b.id))
-  const connectedBase = list.filter(b => conns.has(b.id))
+  const discoverBase = list.filter((b) => !conns.has(normalizeUuid(b.id)))
+  const connectedBase = list.filter((b) => conns.has(normalizeUuid(b.id)))
   const source = feedView === 'connected' ? connectedBase : feedView === 'explore' ? discoverBase : []
 
   const items = source.filter(b => {
@@ -166,10 +176,10 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     return mf && ms && b.trust_score >= 70
   }).slice(0, 4)
 
-  const bizById = new Map<string, Business>(list.map(b => [b.id, b] as const))
-  if (myBiz) bizById.set(myBiz.id, myBiz)
-  const connectionFeedPosts = connectionPosts.filter(p => {
-    const b = bizById.get(p.business_id)
+  const bizById = new Map<string, Business>(list.map((b) => [normalizeUuid(b.id), b] as const))
+  if (myBiz) bizById.set(normalizeUuid(myBiz.id), myBiz)
+  const connectionFeedPosts = connectionPosts.filter((p) => {
+    const b = bizById.get(normalizeUuid(p.business_id))
     if (!b) return true
     const industryOk = filter === 'All' || b.industry === filter
     const searchLower = search.toLowerCase()
@@ -192,12 +202,12 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
   const doConnect = async (b: Business) => {
     if (!myBiz) { toast('Create a business profile first', 'info'); return }
-    if (conns.has(b.id)) { toast('Already connected!', 'info'); return }
+    if (conns.has(normalizeUuid(b.id))) { toast('Already connected!', 'info'); return }
     const { error: connErr } = await sb.from('connections').insert({ from_biz_id: myBiz.id, to_biz_id: b.id })
     if (connErr) { toast('Failed to connect: ' + connErr.message, 'error'); return }
     const { error: chatErr } = await sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: b.id })
     if (chatErr) { toast('Connected, but chat setup failed', 'info') }
-    setConns(s => new Set([...s, b.id]))
+    setConns((s) => new Set([...s, normalizeUuid(b.id)]))
     toast('Connected with ' + b.name + '!')
   }
 
@@ -363,7 +373,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
           {items.map(b => {
             const isSaved = saved.has(b.id)
-            const isConn = conns.has(b.id)
+            const isConn = conns.has(normalizeUuid(b.id))
             const bizName = cleanDisplayText(b.name) || 'Business'
             const bizIndustry = cleanDisplayText(b.industry) || 'Other'
             const bizCity = cleanDisplayText(b.city)

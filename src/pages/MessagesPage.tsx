@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds } from '../lib/db'
+import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds, otherChatParticipantId, normalizeUuid } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useBusinessOnlineMap } from '../lib/presence'
 import { sendPushNotification } from '../lib/push'
@@ -22,10 +22,6 @@ const logoInitials = (name?: string) => (name || '').split(' ').slice(0,2).map(w
 
 /** List row only — avoids N+1 `businesses` + `messages` round-trips per chat. */
 const CHAT_PEER_SELECT = 'id,name,logo,logo_url,industry,city'
-
-function peerIdForChat(c: { participant_a: string; participant_b: string }, myId: string): string {
-  return c.participant_a === myId ? c.participant_b : c.participant_a
-}
 
 /** If batch `businesses.in()` misses a row (RLS, etc.), still render the thread. */
 function fallbackPeer(othId: string): Business {
@@ -104,8 +100,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
       .single()
       .then(({ data: row }) => {
         if (cancelled || !row) return
-        const oid = row.participant_a === myBiz.id ? row.participant_b : row.participant_a
-        setActivePeerId(oid)
+        setActivePeerId(otherChatParticipantId(row as { participant_a: string; participant_b: string }, myBiz.id))
       })
     return () => {
       cancelled = true
@@ -152,7 +147,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
       }
 
       const chatIds = rows.map((c) => c.id)
-      const othIds = [...new Set(rows.map((c: { participant_a: string; participant_b: string }) => peerIdForChat(c, myBiz.id)))]
+      const othIds = [...new Set(rows.map((c: { participant_a: string; participant_b: string }) => otherChatParticipantId(c, myBiz.id)))]
 
       const msgLimit = Math.min(5000, Math.max(400, chatIds.length * 100))
 
@@ -167,7 +162,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
           .limit(msgLimit),
       ])
 
-      const peerById = new Map(peerRows.map((p: Business) => [p.id, p]))
+      const peerById = new Map(peerRows.map((p: Business) => [normalizeUuid(p.id), p]))
       const unreadByChat = new Map<string, number>()
       for (const r of unreadRes.data || []) {
         const cid = (r as { chat_id: string }).chat_id
@@ -183,8 +178,8 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
       }
 
       const enriched: Chat[] = rows.map((c: { id: string; participant_a: string; participant_b: string; created_at: string }) => {
-        const othId = peerIdForChat(c, myBiz.id)
-        const other = peerById.get(othId) ?? fallbackPeer(othId)
+        const othId = otherChatParticipantId(c, myBiz.id)
+        const other = peerById.get(normalizeUuid(othId)) ?? fallbackPeer(othId)
         const last = lastByChat.get(c.id)
         return {
           ...c,
@@ -364,7 +359,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
       {loading && <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>}
       {!loading && chats.length === 0 && <div className="empty"><div className="ico">💬</div><h3>No messages yet</h3><p>Connect with businesses in the Feed to start conversations.</p></div>}
       {chats.map(c => {
-        const peer = c.other_biz ?? fallbackPeer(peerIdForChat(c, myBiz.id))
+        const peer = c.other_biz ?? fallbackPeer(otherChatParticipantId(c, myBiz.id))
         const isOnline = !!onlineById[peer.id]
         return (
           <div
@@ -447,9 +442,7 @@ function ChatView({
     void (async () => {
       const { data: row } = await sb.from('chats').select('participant_a,participant_b').eq('id', chatId).single()
       if (cancelled || !row) return
-      const ra = row.participant_a as string
-      const rb = row.participant_b as string
-      const oid = ra === myBiz.id ? rb : ra
+      const oid = otherChatParticipantId(row as { participant_a: string; participant_b: string }, myBiz.id)
       const { data: b } = await sb.from('businesses').select('*').eq('id', oid).single()
       if (!cancelled && b) setFetchedOther(b as Business)
     })()
