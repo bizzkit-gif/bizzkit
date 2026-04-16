@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds, otherChatParticipantId, normalizeUuid } from '../lib/db'
+import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds, fetchBusinessByIdRobust, otherChatParticipantId, normalizeUuid } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useBusinessOnlineMap } from '../lib/presence'
 import { sendPushNotification } from '../lib/push'
@@ -237,9 +237,9 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
         }
         return
       }
-      const { data } = await sb.from('businesses').select('*').eq('id', sid).single()
+      const data = await fetchBusinessByIdRobust(sid)
       if (!cancelled && data) {
-        setIncomingCallPeer(data as Business)
+        setIncomingCallPeer(data)
         clearPendingChatCall()
       }
     })()
@@ -443,8 +443,8 @@ function ChatView({
       const { data: row } = await sb.from('chats').select('participant_a,participant_b').eq('id', chatId).single()
       if (cancelled || !row) return
       const oid = otherChatParticipantId(row as { participant_a: string; participant_b: string }, myBiz.id)
-      const { data: b } = await sb.from('businesses').select('*').eq('id', oid).single()
-      if (!cancelled && b) setFetchedOther(b as Business)
+      const b = await fetchBusinessByIdRobust(oid)
+      if (!cancelled && b) setFetchedOther(b)
     })()
     return () => {
       cancelled = true

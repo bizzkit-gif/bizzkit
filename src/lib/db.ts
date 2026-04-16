@@ -245,34 +245,79 @@ export function otherConnectionBusinessId(
 }
 
 /**
- * Load `businesses` rows by id (chunked for large lists / URL limits).
- * Fills gaps with per-id lookups when batch `.in()` misses rows.
+ * Load `businesses` rows by id (chunked). Uses SECURITY DEFINER RPC when deployed so peer names
+ * are not blocked by RLS; falls back to PostgREST `.in()` + per-id reads.
  */
 export async function fetchBusinessProfilesByIds(select: string, ids: string[]): Promise<Business[]> {
   const unique = [...new Set(ids.filter(Boolean).map((id) => normalizeUuid(id)).filter(Boolean))]
   if (!unique.length) return []
   const byId = new Map<string, Business>()
+  const needProducts = select.includes('products(')
+
   for (let i = 0; i < unique.length; i += BUSINESS_IN_CHUNK) {
     const chunk = unique.slice(i, i + BUSINESS_IN_CHUNK)
-    const { data, error } = await sb.from('businesses').select(select).in('id', chunk)
-    if (error) {
-      console.warn('fetchBusinessProfilesByIds batch:', error.message)
-      continue
+    const { data: rpcRows, error: rpcErr } = await sb.rpc('get_business_profiles_by_ids', { p_ids: chunk })
+    if (!rpcErr && Array.isArray(rpcRows) && rpcRows.length) {
+      for (const row of rpcRows as Business[]) {
+        if (row?.id) byId.set(normalizeUuid(row.id), row)
+      }
+    } else if (rpcErr) {
+      console.warn('get_business_profiles_by_ids RPC:', rpcErr.message)
     }
-    for (const row of (data || []) as Business[]) {
-      if (row?.id) byId.set(normalizeUuid(row.id), row)
+    const stillMissing = chunk.filter((id) => !byId.has(id))
+    if (!stillMissing.length) continue
+    const { data: directRows, error: dErr } = await sb.from('businesses').select(select).in('id', stillMissing)
+    if (dErr) {
+      console.warn('fetchBusinessProfilesByIds direct batch:', dErr.message)
+    } else if (directRows) {
+      for (const row of directRows as Business[]) {
+        if (row?.id) byId.set(normalizeUuid(row.id), row)
+      }
+    }
+    const stillMissing2 = stillMissing.filter((id) => !byId.has(id))
+    for (const id of stillMissing2) {
+      const { data: one } = await sb.from('businesses').select(select).eq('id', id).maybeSingle()
+      if (one?.id) byId.set(normalizeUuid(one.id), one as Business)
     }
   }
-  const missing = unique.filter((id) => !byId.has(id))
-  if (!missing.length) return unique.map((id) => byId.get(id)).filter((b): b is Business => !!b)
-  const singles = await Promise.all(
-    missing.map((id) => sb.from('businesses').select(select).eq('id', id).maybeSingle()),
-  )
-  for (const r of singles) {
-    const row = r.data as Business | null
-    if (row?.id) byId.set(normalizeUuid(row.id), row)
+
+  if (needProducts) {
+    const needAttach = [...byId.keys()].filter((nid) => !byId.get(nid)?.products?.length)
+    if (needAttach.length) {
+      const { data: prods, error: pe } = await sb
+        .from('products')
+        .select('id,business_id,name,emoji,price,category')
+        .in('business_id', needAttach)
+      if (pe) {
+        console.warn('fetchBusinessProfilesByIds products:', pe.message)
+      } else if (prods?.length) {
+        const byBus = new Map<string, Product[]>()
+        for (const p of prods as Product[]) {
+          const bid = normalizeUuid(p.business_id)
+          if (!byBus.has(bid)) byBus.set(bid, [])
+          byBus.get(bid)!.push(p)
+        }
+        for (const nid of needAttach) {
+          const b = byId.get(nid)
+          const pr = byBus.get(nid)
+          if (b && pr?.length) b.products = pr
+        }
+      }
+    }
   }
+
   return unique.map((id) => byId.get(id)).filter((b): b is Business => !!b)
+}
+
+/** One business by id — RPC first (RLS-safe), then direct select. */
+export async function fetchBusinessByIdRobust(id: string): Promise<Business | null> {
+  const n = normalizeUuid(id)
+  if (!n) return null
+  const { data: rpcRows, error: rpcErr } = await sb.rpc('get_business_profiles_by_ids', { p_ids: [n] })
+  if (!rpcErr && Array.isArray(rpcRows) && rpcRows[0]) return rpcRows[0] as Business
+  if (rpcErr) console.warn('get_business_profiles_by_ids RPC (single):', rpcErr.message)
+  const { data: one } = await sb.from('businesses').select('*').eq('id', id).maybeSingle()
+  return (one as Business | null) ?? null
 }
 
 export type Conference = {
