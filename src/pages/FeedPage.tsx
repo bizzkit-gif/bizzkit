@@ -6,7 +6,7 @@ import { useApp } from '../context/ctx'
 const FEED_BUSINESS_SELECT =
   'id,name,tagline,industry,city,country,type,logo,logo_url,kyc_verified,trust_score,products(id,name,emoji,price,category)'
 
-const FEED_CACHE_PREFIX = 'bizzkit.feed.v1.'
+const FEED_CACHE_PREFIX = 'bizzkit.feed.v2.'
 const FEED_CACHE_MS = 120_000
 
 const normalizeLogoImage = (value?: string | null): string | null => {
