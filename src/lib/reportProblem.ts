@@ -1,9 +1,9 @@
 /**
  * Opens the device mail client with a prefilled support message.
- * Set `VITE_SUPPORT_EMAIL` in `.env` / Vercel for your real inbox.
+ * Override with `VITE_SUPPORT_EMAIL` in `.env` / Vercel when you want a different inbox.
  */
 export function openReportProblem(accountHint?: string | null): void {
-  const support = (import.meta.env.VITE_SUPPORT_EMAIL as string | undefined)?.trim() || 'support@bizzkit.app'
+  const support = (import.meta.env.VITE_SUPPORT_EMAIL as string | undefined)?.trim() || 'babek.sawhney@gmail.com'
   const lines = [
     'Please describe what went wrong:',
     '',
