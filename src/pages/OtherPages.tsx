@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal, fetchBusinessProfilesByIds, otherConnectionBusinessId, normalizeUuid, deleteConnectionBetween } from '../lib/db'
+import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal, fetchBusinessProfilesByIds, otherConnectionBusinessId, normalizeUuid, deleteConnectionBetween, DELETE_ACCOUNT_CONFIRM, deleteMyAccount } from '../lib/db'
+import { clearEmailHasProfile } from '../lib/profileLocal'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { sendPushNotification } from '../lib/push'
 import { useApp } from '../context/ctx'
@@ -30,7 +31,7 @@ const CONF_CACHE_MS = 90_000
 
 // ── PROFILE PAGE ─────────────────────────────────────────────────
 export function ProfilePage({ viewId, onBack, onChat, onTrust }: { viewId?:string|null; onBack?:()=>void; onChat?:(id:string)=>void; onTrust?:()=>void }) {
-const { user, myBiz, refreshBiz, toast, setTab: setAppTab, setPrevTab } = useApp()
+const { user, myBiz, refreshBiz, toast, signOut, setTab: setAppTab, setPrevTab } = useApp()
 const isOwn = !viewId || viewId === myBiz?.id
 const [biz, setBiz] = useState<Business|null>(null)
 const [tab, setTab] = useState<'posts'|'about'>('posts')
@@ -57,6 +58,33 @@ const [connections, setConnections] = useState<Business[]>([])
 const [postErr, setPostErr] = useState('')
 const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set())
 const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set())
+const [deleteAccountBusy, setDeleteAccountBusy] = useState(false)
+
+const runDeleteAccount = async () => {
+  if (
+    !window.confirm(
+      'Permanently delete your Bizzkit account? Your login, business profile, posts, chats, and related data will be removed. This cannot be undone.',
+    )
+  ) {
+    return
+  }
+  const typed = window.prompt(`To confirm, type exactly:\n${DELETE_ACCOUNT_CONFIRM}`)
+  if (typed !== DELETE_ACCOUNT_CONFIRM) {
+    if (typed !== null && typed.trim() !== '') toast('Text did not match — account was not deleted.', 'error')
+    return
+  }
+  setDeleteAccountBusy(true)
+  const res = await deleteMyAccount(DELETE_ACCOUNT_CONFIRM)
+  setDeleteAccountBusy(false)
+  if (!res.ok) {
+    toast(res.error, 'error')
+    return
+  }
+  const em = user?.email ? String(user.email).toLowerCase().trim() : ''
+  if (em) clearEmailHasProfile(em)
+  toast('Account deleted.', 'success')
+  await signOut()
+}
 
 useEffect(() => {
   if (!biz?.id || tab !== 'posts') return
@@ -349,60 +377,6 @@ return (
     <span style={{ fontSize: 11, color: '#1E7EF7', fontWeight: 700, cursor: 'pointer' }} onClick={onTrust}>
       Trust Score →
     </span>
-    <button
-      type="button"
-      onClick={() => {
-        setPrevTab('profile')
-        setAppTab('legal')
-      }}
-      style={{
-        background: 'none',
-        border: 'none',
-        padding: 0,
-        fontSize: 11,
-        color: '#3A5070',
-        fontWeight: 600,
-        cursor: 'pointer',
-        textDecoration: 'underline',
-      }}
-    >
-      Privacy & Terms
-    </button>
-    <button
-      type="button"
-      onClick={() => {
-        setPrevTab('profile')
-        setAppTab('notifications')
-      }}
-      style={{
-        background: 'none',
-        border: 'none',
-        padding: 0,
-        fontSize: 11,
-        color: '#3A5070',
-        fontWeight: 600,
-        cursor: 'pointer',
-        textDecoration: 'underline',
-      }}
-    >
-      Notification settings
-    </button>
-    <button
-      type="button"
-      onClick={() => openReportProblem(user?.id)}
-      style={{
-        background: 'none',
-        border: 'none',
-        padding: 0,
-        fontSize: 11,
-        color: '#3A5070',
-        fontWeight: 600,
-        cursor: 'pointer',
-        textDecoration: 'underline',
-      }}
-    >
-      Report a problem
-    </button>
           </div>
         )}
       </div>
@@ -525,6 +499,99 @@ return (
               </div>
             </div>
           ))}
+          {isOwn && (
+            <div
+              style={{
+                marginTop: 20,
+                paddingTop: 16,
+                borderTop: '1px solid rgba(255,255,255,0.07)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                alignItems: 'stretch',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setPrevTab('profile')
+                  setAppTab('notifications')
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: '4px 0',
+                  fontSize: 12,
+                  color: '#7A92B0',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  textDecoration: 'underline',
+                }}
+              >
+                Notification settings
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPrevTab('profile')
+                  setAppTab('legal')
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: '4px 0',
+                  fontSize: 12,
+                  color: '#7A92B0',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  textDecoration: 'underline',
+                }}
+              >
+                Privacy & Terms
+              </button>
+              <button
+                type="button"
+                onClick={() => openReportProblem(user?.id)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: '4px 0',
+                  fontSize: 12,
+                  color: '#7A92B0',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  textDecoration: 'underline',
+                }}
+              >
+                Report a problem
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-full btn-sm"
+                style={{ marginTop: 4, border: '1px solid rgba(255,75,110,0.28)', color: '#FF8A9E' }}
+                onClick={() => void signOut()}
+              >
+                Log out
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-full btn-sm"
+                disabled={deleteAccountBusy}
+                style={{
+                  marginTop: 6,
+                  border: '1px solid rgba(255,75,110,0.45)',
+                  color: '#FF6B6B',
+                  opacity: deleteAccountBusy ? 0.6 : 1,
+                }}
+                onClick={() => void runDeleteAccount()}
+              >
+                {deleteAccountBusy ? 'Deleting…' : 'Delete account'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 {tab === 'about' && (
@@ -549,7 +616,7 @@ return (
 
 // ── BIZ FORM ──────────────────────────────────────────────────────
 function BizForm({ existing, onSaved, onCancel }: { existing?:Business; onSaved:()=>void; onCancel?:()=>void }) {
-const { user, toast, signOut } = useApp()
+const { user, toast } = useApp()
 const [name, setName] = useState(existing?.name||'')
 const [tagline, setTagline] = useState(existing?.tagline||'')
 const [desc, setDesc] = useState(existing?.description||'')
@@ -559,8 +626,6 @@ const [city, setCity] = useState(existing?.city||'')
 const [country, setCountry] = useState(existing?.country||'')
 const [website, setWebsite] = useState(existing?.website||'')
 const [founded, setFounded] = useState(existing?.founded||'')
-const [notifyInviteEmail, setNotifyInviteEmail] = useState(existing?.notify_session_invite_email !== false)
-const [notifyCalendarReminders, setNotifyCalendarReminders] = useState(existing?.notify_session_calendar_reminders !== false)
 const [err, setErr] = useState('')
 const [saving, setSaving] = useState(false)
 const [uploading, setUploading] = useState(false)
@@ -650,9 +715,9 @@ setSaving(true)
 const data = {
   owner_id:user.id, name:name.trim(), tagline:tagline.trim(), description:desc.trim(), industry:ind, type, city:city.trim(), country, website:website.trim(), founded:founded.trim(), logo:logoUrl||lgo, grad:GRADS[0], trust_score:existing?.trust_score||45, trust_tier:existing?.trust_tier||'Bronze', kyc_verified:existing?.kyc_verified||false, certified:existing?.certified||false,
   phone_whatsapp: null,
-  notify_session_invite_email: notifyInviteEmail,
+  notify_session_invite_email: existing ? existing.notify_session_invite_email !== false : true,
   notify_session_invite_whatsapp: false,
-  notify_session_calendar_reminders: notifyCalendarReminders,
+  notify_session_calendar_reminders: existing ? existing.notify_session_calendar_reminders !== false : true,
 }
 if (existing) {
 const { error } = await sb.from('businesses').update(data).eq('id', existing.id)
@@ -703,23 +768,10 @@ return (
 <div className="field"><label>Website</label><input placeholder="yoursite.com" value={website} onChange={e => setWebsite(e.target.value)} /></div>
 <div className="field"><label>Founded</label><input placeholder="2020" value={founded} onChange={e => setFounded(e.target.value)} /></div>
 </div>
-<div style={{ fontSize:12, fontWeight:700, color:'#7A92B0', margin:'14px 0 8px' }}>Session notifications</div>
-<label style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10, cursor:'pointer', fontSize:13 }}>
-  <input type="checkbox" checked={notifyInviteEmail} onChange={e => setNotifyInviteEmail(e.target.checked)} />
-  Email me when someone invites me to a session
-</label>
-<label style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4, cursor:'pointer', fontSize:13 }}>
-  <input type="checkbox" checked={notifyCalendarReminders} onChange={e => setNotifyCalendarReminders(e.target.checked)} />
-  Calendar reminders: email before sessions I joined
-</label>
-<div style={{ fontSize:10, color:'#7A92B0', lineHeight:1.45, marginBottom:4 }}>In-app chat always works; email uses your account login email.</div>
 {err && <div className="form-err">{err}</div>}
-<div style={{ height:92 }} />
+<div style={{ height:72 }} />
 </div>
 <div style={{ position:'sticky', bottom:0, zIndex:20, padding:'10px 16px calc(10px + env(safe-area-inset-bottom,0px))', background:'linear-gradient(to top, rgba(10,22,40,0.98) 70%, rgba(10,22,40,0))' }}>
-{!!existing && (
-<button type="button" className="btn btn-ghost btn-full btn-sm" style={{ marginBottom:9, border:'1px solid rgba(255,75,110,0.28)', color:'#FF8A9E' }} onClick={() => void signOut()}>Log out</button>
-)}
 <button className="btn btn-blue btn-full" onClick={save} disabled={saving}>{saving?'Saving...':existing?'Save Changes':'Create Profile'}</button>
 </div>
 </div>

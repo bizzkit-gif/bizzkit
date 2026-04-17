@@ -1,17 +1,22 @@
-import React from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useNotificationSettings } from '../hooks/useNotificationSettings'
+import { useApp } from '../context/ctx'
+import { sb } from '../lib/db'
 
 function Row({
   label,
   hint,
   checked,
   onChange,
+  disabled,
 }: {
   label: string
   hint: string
   checked: boolean
   onChange: (v: boolean) => void
+  disabled?: boolean
 }) {
+  const dim = !!disabled
   return (
     <div
       style={{
@@ -21,6 +26,7 @@ function Row({
         gap: 12,
         padding: '12px 0',
         borderBottom: '1px solid rgba(255,255,255,0.07)',
+        opacity: dim ? 0.55 : 1,
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -31,14 +37,17 @@ function Row({
         type="button"
         role="switch"
         aria-checked={checked}
-        onClick={() => onChange(!checked)}
+        disabled={dim}
+        onClick={() => {
+          if (!dim) onChange(!checked)
+        }}
         style={{
           flexShrink: 0,
           width: 48,
           height: 28,
           borderRadius: 14,
           border: 'none',
-          cursor: 'pointer',
+          cursor: dim ? 'not-allowed' : 'pointer',
           background: checked ? '#1E7EF7' : '#3A5070',
           position: 'relative',
           transition: 'background 0.2s',
@@ -63,6 +72,37 @@ function Row({
 
 export default function NotificationSettingsPage({ onBack }: { onBack: () => void }) {
   const [s, update] = useNotificationSettings()
+  const { myBiz, toast, refreshBiz } = useApp()
+  const [inviteEmail, setInviteEmail] = useState(true)
+  const [calendarReminders, setCalendarReminders] = useState(true)
+  const [sessionSaving, setSessionSaving] = useState(false)
+
+  useEffect(() => {
+    if (!myBiz) return
+    setInviteEmail(myBiz.notify_session_invite_email !== false)
+    setCalendarReminders(myBiz.notify_session_calendar_reminders !== false)
+  }, [myBiz?.id, myBiz?.notify_session_invite_email, myBiz?.notify_session_calendar_reminders])
+
+  const persistSessionField = useCallback(
+    async (patch: {
+      notify_session_invite_email?: boolean
+      notify_session_calendar_reminders?: boolean
+    }): Promise<boolean> => {
+      if (!myBiz?.id) return false
+      setSessionSaving(true)
+      const { error } = await sb.from('businesses').update(patch).eq('id', myBiz.id)
+      setSessionSaving(false)
+      if (error) {
+        toast(error.message, 'error')
+        return false
+      }
+      await refreshBiz()
+      window.dispatchEvent(new Event('bizzkit-notification-settings'))
+      toast('Session notification preference saved', 'success')
+      return true
+    },
+    [myBiz?.id, refreshBiz, toast],
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -78,8 +118,73 @@ export default function NotificationSettingsPage({ onBack }: { onBack: () => voi
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 18px 28px' }}>
         <p style={{ fontSize: 12, color: '#7A92B0', lineHeight: 1.5, marginBottom: 8 }}>
-          Control sounds and alerts in Bizzkit. Browser or system permissions may still apply for banners and push.
+          Control sounds, alerts, and session-related email for your business profile.
         </p>
+
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: '#9BB0CC',
+            letterSpacing: 0.4,
+            textTransform: 'uppercase',
+            marginTop: 6,
+            marginBottom: 2,
+          }}
+        >
+          Session emails
+        </div>
+        <p style={{ fontSize: 11, color: '#7A92B0', lineHeight: 1.45, marginBottom: 4 }}>
+          Uses your account login email. In-app chat is unchanged.
+        </p>
+        {!myBiz ? (
+          <p style={{ fontSize: 12, color: '#7A92B0', padding: '10px 0 14px' }}>
+            Create a business profile first — then you can turn session emails on or off here.
+          </p>
+        ) : (
+          <>
+            <Row
+              label="Email when invited to a session"
+              hint="When someone invites your business to a Connect session, we can email you in addition to in-app chat."
+              checked={inviteEmail}
+              disabled={sessionSaving}
+              onChange={(v) => {
+                const prev = inviteEmail
+                setInviteEmail(v)
+                void persistSessionField({ notify_session_invite_email: v }).then((ok) => {
+                  if (!ok) setInviteEmail(prev)
+                })
+              }}
+            />
+            <Row
+              label="Calendar reminders for sessions you joined"
+              hint="Email reminders before sessions you have signed up for (in addition to in-app messages when enabled)."
+              checked={calendarReminders}
+              disabled={sessionSaving}
+              onChange={(v) => {
+                const prev = calendarReminders
+                setCalendarReminders(v)
+                void persistSessionField({ notify_session_calendar_reminders: v }).then((ok) => {
+                  if (!ok) setCalendarReminders(prev)
+                })
+              }}
+            />
+          </>
+        )}
+
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: '#9BB0CC',
+            letterSpacing: 0.4,
+            textTransform: 'uppercase',
+            marginTop: 18,
+            marginBottom: 2,
+          }}
+        >
+          In the app
+        </div>
         <Row
           label="Message sounds"
           hint="Play a short tone when you receive a new chat message while using the app."

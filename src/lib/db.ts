@@ -90,6 +90,29 @@ export const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
   },
 })
 
+/** Must match `delete-account` Edge Function and user prompt (permanent account deletion). */
+export const DELETE_ACCOUNT_CONFIRM = 'DELETE MY ACCOUNT' as const
+
+export async function deleteMyAccount(confirm: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (confirm !== DELETE_ACCOUNT_CONFIRM) {
+    return { ok: false, error: `Confirmation must be exactly: ${DELETE_ACCOUNT_CONFIRM}` }
+  }
+  const { data: sessionData } = await sb.auth.getSession()
+  if (!sessionData.session?.access_token) {
+    return { ok: false, error: 'Not signed in.' }
+  }
+  const { data, error } = await sb.functions.invoke<{ ok?: boolean; error?: string }>('delete-account', {
+    body: { confirm: DELETE_ACCOUNT_CONFIRM },
+  })
+  if (error) {
+    return { ok: false, error: error.message || 'Delete account failed' }
+  }
+  if (data && typeof data === 'object' && 'error' in data && typeof (data as { error?: string }).error === 'string') {
+    return { ok: false, error: (data as { error: string }).error }
+  }
+  return { ok: true }
+}
+
 /** Prefix in chat messages used to signal an incoming Random video call invite. */
 export const RANDOM_CALL_INVITE_MARKER = '[RANDOM_CALL_INVITE]'
 
