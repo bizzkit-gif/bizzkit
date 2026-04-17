@@ -9,7 +9,8 @@
     "supabase:link": "npx supabase link --project-ref ganberetmowmaidioryu",
     "supabase:db:push": "npx supabase db push",
     "supabase:deploy:session-notify": "npx supabase functions deploy session-external-notify --project-ref ganberetmowmaidioryu",
-    "supabase:deploy:delete-account": "npx supabase functions deploy delete-account --project-ref ganberetmowmaidioryu"
+    "supabase:deploy:delete-account": "npx supabase functions deploy delete-account --project-ref ganberetmowmaidioryu",
+    "supabase:deploy:list-feed-businesses": "npx supabase functions deploy list-feed-businesses --project-ref ganberetmowmaidioryu"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",

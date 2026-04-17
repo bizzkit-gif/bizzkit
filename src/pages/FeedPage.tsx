@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { sb, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid, deleteConnectionBetween } from '../lib/db'
+import { sb, SUPABASE_ANON_KEY, SUPABASE_URL, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid, deleteConnectionBetween } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 /** Narrow columns + product fields — faster than `*,products(*)`. */
@@ -101,12 +101,32 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       }
       if (!usedCache) setLoading(true)
 
-      const [{ data: businesses }, { data: savedRows }, connsRes, chatsRes] = await Promise.all([
+      const [businessesRes, { data: savedRows }, connsRes, chatsRes] = await Promise.all([
         sb.from('businesses').select(FEED_BUSINESS_SELECT).order('trust_score', { ascending: false }),
         user?.id ? sb.from('saved_businesses').select('business_id').eq('user_id', user.id) : Promise.resolve({ data: [] as any[] }),
         ownBizId ? sb.from('connections').select('from_biz_id,to_biz_id').or(`from_biz_id.eq.${ownBizId},to_biz_id.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] }),
         ownBizId ? sb.from('chats').select('participant_a,participant_b').or(`participant_a.eq.${ownBizId},participant_b.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] })
       ])
+      let businesses = (businessesRes.data || []) as Business[]
+      if (!businesses.length || !!businessesRes.error) {
+        const { data: sessData } = await sb.auth.getSession()
+        const token = sessData.session?.access_token || ''
+        if (token) {
+          const fallbackRes = await fetch(`${SUPABASE_URL}/functions/v1/list-feed-businesses`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              apikey: SUPABASE_ANON_KEY,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({}),
+          })
+          if (fallbackRes.ok) {
+            const body = (await fallbackRes.json().catch(() => ({}))) as { rows?: Business[] }
+            businesses = (body.rows || []) as Business[]
+          }
+        }
+      }
 
       if (!active) return
       const connIds = new Set<string>()
