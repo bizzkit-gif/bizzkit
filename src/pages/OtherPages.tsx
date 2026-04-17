@@ -861,6 +861,17 @@ function parseConferenceStart(c: Conference) {
   return dt
 }
 
+function conferenceIceServers(): RTCIceServer[] {
+  return [
+    { urls:'stun:stun.l.google.com:19302' },
+    { urls:'stun:stun1.l.google.com:19302' },
+    { urls:'stun:stun2.l.google.com:19302' },
+    { urls:'turn:openrelay.metered.ca:80', username:'openrelayproject', credential:'openrelayproject' },
+    { urls:'turn:openrelay.metered.ca:443', username:'openrelayproject', credential:'openrelayproject' },
+    { urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject' },
+  ]
+}
+
 export function ConferencePage() {
 const { myBiz, toast } = useApp()
 const [confs, setConfs] = useState<Conference[]>([])
@@ -936,7 +947,11 @@ useEffect(() => {
 }, [myBiz?.id])
 
 useEffect(() => {
-const ch = sb.channel('conf-updates').on('postgres_changes', { event:'*', schema:'public', table:'conference_attendees' }, load).subscribe()
+const ch = sb
+  .channel('conf-updates')
+  .on('postgres_changes', { event:'*', schema:'public', table:'conference_attendees' }, load)
+  .on('postgres_changes', { event:'*', schema:'public', table:'conferences' }, load)
+  .subscribe()
 return () => { sb.removeChannel(ch) }
 }, [load])
 
@@ -958,9 +973,32 @@ toast('Left conference')
 load()
 }
 
-const openLive = (c: Conference) => {
+const openLive = async (c: Conference) => {
   if (c.status === 'closed') { toast('This conference is closed', 'info'); return }
+  if (!myBiz) { toast('Create a business profile first', 'info'); return }
+  if (myBiz.id === c.organizer_id) {
+    if (c.status !== 'live') {
+      const { error } = await sb.from('conferences').update({ status:'live' }).eq('id', c.id)
+      if (error) { toast('Failed to start live session: ' + error.message, 'error'); return }
+    }
+    setLiveConf({ ...c, status:'live' })
+    load()
+    return
+  }
+  if (c.status !== 'live') { toast('Live session has not started yet', 'info'); return }
   setLiveConf(c)
+}
+
+const joinAndGoLive = async (c: Conference) => {
+  if (!myBiz) { toast('Create a business profile first', 'info'); return }
+  if (c.status === 'closed') { toast('This conference is closed', 'info'); return }
+  const alreadyJoined = !!c.conference_attendees?.some((a:any) => a.business_id === myBiz.id)
+  if (!alreadyJoined) {
+    if ((c.conference_attendees?.length || 0) >= c.max_attendees) { toast('Session is full!', 'error'); return }
+    const { error } = await sb.from('conference_attendees').insert({ conference_id:c.id, business_id:myBiz.id })
+    if (error) { toast('Could not join session: ' + error.message, 'error'); return }
+  }
+  await openLive(c)
 }
 
 const ensureChat = async (a: string, b: string) => {
@@ -1059,12 +1097,12 @@ return (
 {loading && <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>}
 {!loading && myConfs.length > 0 && (
 <><div className="sec-hd"><h3>My Sessions</h3></div>
-{myConfs.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined onLeave={() => leave(c)} onGoLive={() => openLive(c)} onClose={() => closeConference(c)} onInviteConnections={() => setInviteModalConf(c)} />)}
+{myConfs.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined onLeave={() => leave(c)} onGoLive={() => { void openLive(c) }} onClose={() => closeConference(c)} onInviteConnections={() => setInviteModalConf(c)} />)}
 <div style={{ height:8 }} /></>
 )}
 <div className="sec-hd"><h3>Available Sessions</h3><span className="see-all">{avail.length} open</span></div>
 {!loading && avail.length === 0 && <div className="empty"><div className="ico">📅</div><h3>No sessions right now</h3>{myBiz && <button className="btn btn-accent btn-sm" style={{ marginTop:14 }} onClick={() => setView('create')}>+ Create one</button>}</div>}
-{avail.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined={false} onJoin={() => join(c)} onGoLive={() => openLive(c)} onClose={() => closeConference(c)} />)}
+{avail.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined={false} onJoin={() => join(c)} onJoinLive={() => { void joinAndGoLive(c) }} onGoLive={() => { void openLive(c) }} onClose={() => closeConference(c)} />)}
 
 {inviteModalConf && myBiz && (
 <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.72)', zIndex:600, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={() => setInviteModalConf(null)} role="presentation">
@@ -1150,6 +1188,7 @@ function ConfCard({
   myBizId,
   joined,
   onJoin,
+  onJoinLive,
   onLeave,
   onGoLive,
   onClose,
@@ -1159,6 +1198,7 @@ function ConfCard({
   myBizId?: string | null
   joined: boolean
   onJoin?: () => void
+  onJoinLive?: () => void
   onLeave?: () => void
   onGoLive: () => void
   onClose: () => void
@@ -1170,6 +1210,7 @@ const pct = (atts.length/c.max_attendees)*100
 const days = Math.max(0, Math.ceil((new Date(c.date).getTime()-Date.now())/86400000))
 const isMine = myBizId && c.organizer_id === myBizId
 const closed = c.status === 'closed'
+const isLive = c.status === 'live'
 return (
 <div style={{ margin:'0 16px 10px', background:'#152236', borderRadius:15, border:`1px solid ${closed?'rgba(255,75,110,0.35)':joined?'rgba(30,126,247,0.35)':'rgba(255,255,255,0.07)'}`, overflow:'hidden', opacity:closed?0.75:1 }}>
 <div style={{ padding:'13px 13px 10px' }}>
@@ -1180,6 +1221,7 @@ return (
 <div style={{ fontFamily:'Syne, sans-serif', fontSize:13.5, fontWeight:700 }}>{c.title}</div>
 {joined && <span style={{ fontSize:9, fontWeight:800, background:'#1E7EF7', color:'#fff', padding:'2px 5px', borderRadius:5 }}>JOINED</span>}
 {isMine && <span style={{ fontSize:9, fontWeight:800, background:'#FF6B35', color:'#fff', padding:'2px 5px', borderRadius:5 }}>HOST</span>}
+{isLive && !closed && <span style={{ fontSize:9, fontWeight:800, background:'#FF4B6E', color:'#fff', padding:'2px 5px', borderRadius:5 }}>LIVE NOW</span>}
 {closed && <span style={{ fontSize:9, fontWeight:800, background:'#FF4B6E', color:'#fff', padding:'2px 5px', borderRadius:5 }}>CLOSED</span>}
 </div>
 <div style={{ fontSize:10.5, color:'#7A92B0', marginTop:2 }}>{c.industry} · {c.location}</div>
@@ -1204,9 +1246,17 @@ return (
 </div>
 )}
 <div style={{ padding:'0 13px 12px', display:'flex', gap:7 }}>
-{!closed && !joined && !isMine && <button className="btn btn-blue btn-full btn-sm" onClick={onJoin}>Join - {spots} spots left</button>}
-{!closed && joined && !isMine && <><button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onLeave}>Leave</button><button className="btn btn-blue btn-sm" style={{ flex:2 }} onClick={onGoLive}>Go Live</button></>}
-{!closed && isMine && <><button className="btn btn-blue btn-sm" style={{ flex:2 }} onClick={onGoLive}>Start Live Session</button><button className="btn btn-red btn-sm" style={{ flex:1 }} onClick={onClose}>Close</button></>}
+{!closed && !joined && !isMine && !isLive && <button className="btn btn-blue btn-full btn-sm" onClick={onJoin}>Join - {spots} spots left</button>}
+{!closed && !joined && !isMine && isLive && <button className="btn btn-blue btn-full btn-sm" onClick={onJoinLive || onJoin}>Join Live Now</button>}
+{!closed && joined && !isMine && (
+  <>
+    <button className="btn btn-ghost btn-sm" style={{ flex:1 }} onClick={onLeave}>Leave</button>
+    {isLive
+      ? <button className="btn btn-blue btn-sm" style={{ flex:2 }} onClick={onGoLive}>Join Live</button>
+      : <button className="btn btn-ghost btn-sm" style={{ flex:2 }} disabled>Waiting for host</button>}
+  </>
+)}
+{!closed && isMine && <><button className="btn btn-blue btn-sm" style={{ flex:2 }} onClick={onGoLive}>{isLive ? 'Resume Live Session' : 'Start Live Session'}</button><button className="btn btn-red btn-sm" style={{ flex:1 }} onClick={onClose}>Close</button></>}
 {closed && <button className="btn btn-ghost btn-full btn-sm" disabled>Conference Closed</button>}
 </div>
 </div>
@@ -1234,6 +1284,7 @@ function ConferenceLiveRoom({ conference, myBiz, onBack }: { conference: Confere
   const localStreamRef = useRef<MediaStream|null>(null)
   const channelRef = useRef<any>(null)
   const peersRef = useRef<Record<string, RTCPeerConnection>>({})
+  const pendingIceRef = useRef<Record<string, RTCIceCandidateInit[]>>({})
   const peerIdRef = useRef<string>(`peer-${Date.now()}-${Math.random().toString(36).slice(2,8)}`)
 
   const cleanupPeer = useCallback((pid: string) => {
@@ -1259,6 +1310,7 @@ function ConferenceLiveRoom({ conference, myBiz, onBack }: { conference: Confere
       delete next[pid]
       return next
     })
+    delete pendingIceRef.current[pid]
   }, [])
 
   const sendSignal = useCallback((sig: LiveSignal) => {
@@ -1267,24 +1319,45 @@ function ConferenceLiveRoom({ conference, myBiz, onBack }: { conference: Confere
     ch.send({ type:'broadcast', event:'signal', payload:sig })
   }, [])
 
+  const flushPendingIce = useCallback(async (targetPeerId: string, pc: RTCPeerConnection) => {
+    const queue = pendingIceRef.current[targetPeerId] || []
+    pendingIceRef.current[targetPeerId] = []
+    for (const init of queue) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(init))
+      } catch {
+        // Ignore stale ICE candidates; newer candidates continue arriving.
+      }
+    }
+  }, [])
+
   const createPeer = useCallback((targetPeerId: string) => {
     if (peersRef.current[targetPeerId]) return peersRef.current[targetPeerId]
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls:'stun:stun.l.google.com:19302' },
-        { urls:'stun:stun1.l.google.com:19302' }
-      ]
+      iceServers: conferenceIceServers(),
+      iceCandidatePoolSize: 10,
     })
     const local = localStreamRef.current
     if (local) local.getTracks().forEach(track => pc.addTrack(track, local))
     pc.ontrack = (e) => {
-      const stream = e.streams?.[0]
-      if (!stream) return
-      setRemoteStreams(prev => ({ ...prev, [targetPeerId]: stream }))
+      const stream = e.streams?.[0] || new MediaStream([e.track])
+      setRemoteStreams(prev => {
+        const current = prev[targetPeerId]
+        if (!current) return { ...prev, [targetPeerId]: stream }
+        const merged = new MediaStream()
+        const seen = new Set<string>()
+        for (const t of [...current.getTracks(), ...stream.getTracks()]) {
+          if (!seen.has(t.id)) {
+            seen.add(t.id)
+            merged.addTrack(t)
+          }
+        }
+        return { ...prev, [targetPeerId]: merged }
+      })
     }
     pc.onicecandidate = (e) => {
       if (!e.candidate) return
-      sendSignal({ type:'ice', from:peerIdRef.current, to:targetPeerId, payload:e.candidate })
+      sendSignal({ type:'ice', from:peerIdRef.current, to:targetPeerId, payload:e.candidate.toJSON() })
     }
     peersRef.current[targetPeerId] = pc
     return pc
@@ -1301,7 +1374,10 @@ function ConferenceLiveRoom({ conference, myBiz, onBack }: { conference: Confere
           return
         }
         localStreamRef.current = local
-        if (localVideoRef.current) localVideoRef.current.srcObject = local
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = local
+          void localVideoRef.current.play().catch(() => {})
+        }
 
         const ch = sb.channel(room)
           .on('broadcast', { event:'signal' }, async ({ payload }: { payload: LiveSignal }) => {
@@ -1313,27 +1389,51 @@ function ConferenceLiveRoom({ conference, myBiz, onBack }: { conference: Confere
 
             if (msg.type === 'join') {
               const pc = createPeer(msg.from)
-              const offer = await pc.createOffer()
-              await pc.setLocalDescription(offer)
-              sendSignal({ type:'offer', from:peerIdRef.current, to:msg.from, payload:offer, bizName:myBiz.name, bizId:myBiz.id })
+              try {
+                const offer = await pc.createOffer({ offerToReceiveAudio:true, offerToReceiveVideo:true })
+                await pc.setLocalDescription(offer)
+                sendSignal({ type:'offer', from:peerIdRef.current, to:msg.from, payload:offer, bizName:myBiz.name, bizId:myBiz.id })
+              } catch {
+                // Ignore transient peer setup failure; next join/update retries signaling.
+              }
             }
 
             if (msg.type === 'offer') {
               const pc = createPeer(msg.from)
-              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload))
-              const answer = await pc.createAnswer()
-              await pc.setLocalDescription(answer)
-              sendSignal({ type:'answer', from:peerIdRef.current, to:msg.from, payload:answer, bizName:myBiz.name, bizId:myBiz.id })
+              try {
+                await pc.setRemoteDescription(new RTCSessionDescription(msg.payload))
+                await flushPendingIce(msg.from, pc)
+                const answer = await pc.createAnswer({ offerToReceiveAudio:true, offerToReceiveVideo:true })
+                await pc.setLocalDescription(answer)
+                sendSignal({ type:'answer', from:peerIdRef.current, to:msg.from, payload:answer, bizName:myBiz.name, bizId:myBiz.id })
+              } catch {
+                // Ignore malformed offer sequence from stale peers.
+              }
             }
 
             if (msg.type === 'answer') {
               const pc = createPeer(msg.from)
-              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload))
+              try {
+                await pc.setRemoteDescription(new RTCSessionDescription(msg.payload))
+                await flushPendingIce(msg.from, pc)
+              } catch {
+                // Ignore stale answers from old peers.
+              }
             }
 
             if (msg.type === 'ice') {
               const pc = createPeer(msg.from)
-              if (msg.payload) await pc.addIceCandidate(new RTCIceCandidate(msg.payload))
+              const init = msg.payload as RTCIceCandidateInit | undefined
+              if (!init) return
+              if (!pc.remoteDescription) {
+                pendingIceRef.current[msg.from] = [...(pendingIceRef.current[msg.from] || []), init]
+                return
+              }
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(init))
+              } catch {
+                pendingIceRef.current[msg.from] = [...(pendingIceRef.current[msg.from] || []), init]
+              }
             }
 
             if (msg.type === 'leave') cleanupPeer(msg.from)
@@ -1363,7 +1463,7 @@ function ConferenceLiveRoom({ conference, myBiz, onBack }: { conference: Confere
       localStreamRef.current = null
       channelRef.current = null
     }
-  }, [conference.id, createPeer, cleanupPeer, myBiz.name, sendSignal])
+  }, [conference.id, createPeer, cleanupPeer, flushPendingIce, myBiz.id, myBiz.name, sendSignal])
 
   const toggleMic = () => {
     const local = localStreamRef.current
@@ -1387,6 +1487,9 @@ function ConferenceLiveRoom({ conference, myBiz, onBack }: { conference: Confere
     if (ending) return
     setEnding(true)
     try {
+      if (myBiz.id === conference.organizer_id) {
+        await sb.from('conferences').update({ status:'open' }).eq('id', conference.id).eq('status', 'live')
+      }
       const dateKey = new Date().toISOString().slice(0, 10)
       const marker = `[CONF_CALL_HISTORY:${conference.id}:${dateKey}]`
       const ids = Array.from(new Set(Object.values(remoteBizIds).filter(id => id && id !== myBiz.id)))
