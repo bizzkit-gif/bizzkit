@@ -256,8 +256,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   }
 
   const discoverBase = list.filter((b) => !conns.has(normalizeUuid(b.id)))
+  const exploreBase = list
   const connectedBase = list.filter((b) => conns.has(normalizeUuid(b.id)))
-  const source = feedView === 'connected' ? connectedBase : feedView === 'explore' ? discoverBase : []
+  const source = feedView === 'connected' ? connectedBase : feedView === 'explore' ? exploreBase : []
 
   const items = source.filter((b) => {
     const mf = filter === 'All' || b.industry === filter
@@ -265,7 +266,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     return mf && ms
   })
 
-  const trending = discoverBase.filter((b) => {
+  const trending = exploreBase.filter((b) => {
     const mf = filter === 'All' || b.industry === filter
     const ms = matchesSearchText(businessSearchBlob(b), search)
     return mf && ms && b.trust_score >= 70
