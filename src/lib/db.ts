@@ -125,6 +125,17 @@ export async function deleteMyAccount(confirm: string): Promise<{ ok: true } | {
       token = refreshed.session?.access_token || ''
       if (!token) return { ok: false, error: 'Session expired. Please log in again and retry.' }
       res = await callDelete(token)
+      if (res.status === 401) {
+        // Fallback path: let supabase-js attach auth through its internal pipeline.
+        const viaInvoke = await sb.functions.invoke<{ ok?: boolean; error?: string }>('delete-account', {
+          body: { confirm: DELETE_ACCOUNT_CONFIRM },
+        })
+        if (!viaInvoke.error) {
+          const d = viaInvoke.data
+          if (!d || typeof d.error !== 'string') return { ok: true }
+          return { ok: false, error: d.error }
+        }
+      }
     }
     const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
     if (!res.ok) {
