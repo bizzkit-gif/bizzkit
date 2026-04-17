@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds, fetchBusinessByIdRobust, otherChatParticipantId, normalizeUuid } from '../lib/db'
+import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds, fetchBusinessByIdRobust, otherChatParticipantId, normalizeUuid, CONFERENCE_SESSION_INVITE_MARKER } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useBusinessOnlineMap } from '../lib/presence'
 import { sendPushNotification } from '../lib/push'
@@ -60,8 +60,23 @@ function normalizeMsgs(rows: Msg[] | null | undefined): Msg[] {
   return (rows || []).filter(isValidChatMsg)
 }
 
+type ConferenceInviteState = 'pending' | 'accepted' | 'declined'
+
+function parseConferenceInviteMessage(text: string | null | undefined): { conferenceId: string; state: ConferenceInviteState } | null {
+  const raw = typeof text === 'string' ? text.trim() : ''
+  if (!raw.startsWith(`${CONFERENCE_SESSION_INVITE_MARKER}:`)) return null
+  const body = raw.slice(CONFERENCE_SESSION_INVITE_MARKER.length + 1).trim()
+  const token = body.split(/\s+/, 1)[0] || ''
+  if (!token) return null
+  const [conferenceIdRaw, stateRaw] = token.split(':')
+  const conferenceId = (conferenceIdRaw || '').trim()
+  if (!conferenceId) return null
+  const state = stateRaw === 'accepted' || stateRaw === 'declined' ? stateRaw : 'pending'
+  return { conferenceId, state }
+}
+
 export default function MessagesPage({ openWith, onClearOpen }: { openWith?: string|null; onClearOpen?: () => void }) {
-  const { myBiz, setUnread, toast, pendingChatCallFromBusinessId, clearPendingChatCall } = useApp()
+  const { myBiz, setUnread, toast, pendingChatCallFromBusinessId, clearPendingChatCall, setTab } = useApp()
   const [chats, setChats] = useState<Chat[]>([])
   const [activeId, setActiveId] = useState<string|null>(null)
   /** When user picks a thread while `openWith` RPC is still resolving, do not overwrite their choice. */
@@ -290,6 +305,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
         toast={toast}
         incomingCallPeer={incomingCallPeer}
         onClearIncomingCall={() => setIncomingCallPeer(null)}
+        onOpenConference={() => setTab('conference')}
         videoCallOpen={videoCallOpen}
         setVideoCallOpen={setVideoCallOpen}
       />
@@ -407,6 +423,7 @@ function ChatView({
   toast,
   incomingCallPeer,
   onClearIncomingCall,
+  onOpenConference,
   videoCallOpen,
   setVideoCallOpen,
 }: {
@@ -422,12 +439,14 @@ function ChatView({
   toast: (msg: string, type?: 'success' | 'error' | 'info') => void
   incomingCallPeer: Business | null
   onClearIncomingCall: () => void
+  onOpenConference: () => void
   videoCallOpen: boolean
   setVideoCallOpen: (v: boolean) => void
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [sessionInviteBusyId, setSessionInviteBusyId] = useState<string | null>(null)
   const [fetchedOther, setFetchedOther] = useState<Business | null>(null)
   const bottom = useRef<HTMLDivElement>(null)
 
@@ -552,6 +571,72 @@ function ChatView({
   const showIncomingBanner =
     !!incomingCallPeer && !videoCallOpen && !!displayOther && displayOther.id === incomingCallPeer.id
 
+  const handleSessionInviteAction = async (m: Msg, action: 'accept' | 'decline') => {
+    const parsed = parseConferenceInviteMessage(m.text)
+    if (!parsed) return
+    if (sessionInviteBusyId) return
+    setSessionInviteBusyId(m.id)
+    try {
+      if (action === 'decline') {
+        const text = `${CONFERENCE_SESSION_INVITE_MARKER}:${parsed.conferenceId}:declined You declined this invite.`
+        const { error } = await sb.from('messages').update({ text }).eq('id', m.id)
+        if (error) {
+          toast('Could not decline invite: ' + error.message, 'error')
+          return
+        }
+        setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, text } : x)))
+        toast('Invite declined', 'info')
+        return
+      }
+
+      const { data: conf, error: confErr } = await sb
+        .from('conferences')
+        .select('id,title,status,max_attendees,conference_attendees(business_id)')
+        .eq('id', parsed.conferenceId)
+        .maybeSingle()
+      if (confErr) {
+        toast('Could not open session: ' + confErr.message, 'error')
+        return
+      }
+      if (!conf) {
+        toast('This session is no longer available', 'error')
+        return
+      }
+      if (conf.status === 'closed') {
+        toast('This session is closed', 'info')
+        return
+      }
+      const attendees = (conf.conference_attendees || []) as { business_id: string }[]
+      const alreadyJoined = attendees.some((a) => a.business_id === myId)
+      if (!alreadyJoined) {
+        if ((attendees.length || 0) >= conf.max_attendees) {
+          toast('Session is full', 'error')
+          return
+        }
+        const { error: joinErr } = await sb.from('conference_attendees').insert({ conference_id: conf.id, business_id: myId })
+        if (joinErr) {
+          const msg = (joinErr.message || '').toLowerCase()
+          if (!(msg.includes('duplicate') || msg.includes('already'))) {
+            toast('Could not join session: ' + joinErr.message, 'error')
+            return
+          }
+        }
+      }
+
+      const acceptedText = `${CONFERENCE_SESSION_INVITE_MARKER}:${parsed.conferenceId}:accepted You accepted this invite.`
+      const { error: msgErr } = await sb.from('messages').update({ text: acceptedText }).eq('id', m.id)
+      if (msgErr) {
+        toast('Joined, but could not update invite state: ' + msgErr.message, 'info')
+      } else {
+        setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, text: acceptedText } : x)))
+      }
+      toast('Joined session', 'success')
+      onOpenConference()
+    } finally {
+      setSessionInviteBusyId(null)
+    }
+  }
+
   const QUICK = ["👋 Hello!", "Let's connect", "Request a quote?", "Schedule a call?"]
 
   const grouped: { date:string; msgs:Msg[] }[] = []
@@ -648,6 +733,8 @@ function ChatView({
             </div>
             {g.msgs.map((m, i) => {
               const mine = m.sender_id === myId
+              const sessionInvite = parseConferenceInviteMessage(m.text)
+              const showSessionInviteActions = !mine && sessionInvite?.state === 'pending'
               return (
                 <div key={m.id} style={{ display:'flex', flexDirection:mine?'row-reverse':'row', alignItems:'flex-end', gap:5, marginBottom:4 }}>
                   {!mine && displayOther && i === 0 && <div className={grad(displayOther.id)} style={{ width:26, height:26, borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#fff', flexShrink:0, overflow:'hidden' }}>
@@ -658,6 +745,28 @@ function ChatView({
                   {!mine && i > 0 && <div style={{ width:26, flexShrink:0 }} />}
                   <div style={{ maxWidth:'72%' }}>
                     <div style={{ padding:'8px 11px', borderRadius:mine?'14px 14px 4px 14px':'14px 14px 14px 4px', background:mine?'#1E7EF7':'#1A2D47', color:'#fff', fontSize:13, lineHeight:1.5, border:mine?'none':'1px solid rgba(255,255,255,0.07)' }}>{displayChatMessageText(m.text)}</div>
+                    {showSessionInviteActions && (
+                      <div style={{ display:'flex', gap:6, marginTop:6 }}>
+                        <button
+                          type="button"
+                          className="btn btn-green btn-sm"
+                          style={{ flex:1, padding:'6px 8px' }}
+                          disabled={sessionInviteBusyId === m.id}
+                          onClick={() => { void handleSessionInviteAction(m, 'accept') }}
+                        >
+                          {sessionInviteBusyId === m.id ? 'Joining...' : 'Accept'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ flex:1, padding:'6px 8px' }}
+                          disabled={sessionInviteBusyId === m.id}
+                          onClick={() => { void handleSessionInviteAction(m, 'decline') }}
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    )}
                     <div style={{ fontSize:9.5, color:'#3A5070', marginTop:2, textAlign:mine?'right':'left' }}>{fmtTime(m.created_at || '')}</div>
                   </div>
                 </div>
