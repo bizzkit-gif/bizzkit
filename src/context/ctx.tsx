@@ -137,12 +137,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!user) return null
     const em = user.email ? String(user.email).toLowerCase().trim() : ''
     try {
-      const { data } = await sb
-        .from('businesses')
-        .select('*,products(id,name,emoji,price,category)')
-        .eq('owner_id', user.id)
-        .single()
-      const nextBiz = data || null
+      let nextBiz: Business | null = null
+      // Fresh profile creation can take a moment to become readable with current RLS/session timing.
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const { data } = await sb
+          .from('businesses')
+          .select('*,products(id,name,emoji,price,category)')
+          .eq('owner_id', user.id)
+          .maybeSingle()
+        nextBiz = (data as Business | null) || null
+        if (nextBiz?.id || attempt === 3) break
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)))
+      }
       setMyBiz(nextBiz)
       if (em) {
         if (nextBiz?.id) setEmailHasProfile(em)

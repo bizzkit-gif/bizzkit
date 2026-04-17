@@ -195,13 +195,17 @@ if (loading) return <div style={{ display:'flex', justifyContent:'center', paddi
 if (editing && isOwn) return <BizForm existing={biz||undefined} onSaved={async () => {
   setEditing(false)
   const refreshed = await refreshBiz()
-  setBiz(refreshed)
+  if (refreshed) setBiz(refreshed)
   toast(biz?'Profile updated!':'Profile created!')
 }} onCancel={() => setEditing(false)} />
 if (isOwn && !myBiz) return <BizForm onSaved={async () => {
   const refreshed = await refreshBiz()
-  setBiz(refreshed)
-  toast('Profile created!')
+  if (refreshed) {
+    setBiz(refreshed)
+    toast('Profile created!')
+  } else {
+    toast('Profile saved. Loading your profile…', 'info', 3200)
+  }
 }} />
 if (!biz) return <div style={{ padding:'80px 20px', textAlign:'center', color:'#7A92B0' }}>Business not found</div>
 const logoRenderUrl = (() => {
@@ -617,7 +621,7 @@ return (
 }
 
 // ── BIZ FORM ──────────────────────────────────────────────────────
-function BizForm({ existing, onSaved, onCancel }: { existing?:Business; onSaved:()=>void; onCancel?:()=>void }) {
+function BizForm({ existing, onSaved, onCancel }: { existing?:Business; onSaved:(created?:Business)=>void; onCancel?:()=>void }) {
 const { user, toast } = useApp()
 const [name, setName] = useState(existing?.name||'')
 const [tagline, setTagline] = useState(existing?.tagline||'')
@@ -744,17 +748,21 @@ if (error && isSessionNotifySchemaError(error.message)) {
 }
 if (error) { setSaving(false); setErr(error.message); toast('Failed to save profile', 'error'); return }
 } else {
-let { error } = await sb.from('businesses').insert(data)
+let created: Business | undefined
+let { data: insertedRow, error } = await sb.from('businesses').insert(data).select('*').single()
 if (error && isSessionNotifySchemaError(error.message)) {
   const fallback = { ...data } as Omit<typeof data, 'phone_whatsapp' | 'notify_session_invite_email' | 'notify_session_invite_whatsapp' | 'notify_session_calendar_reminders'>
   delete (fallback as { phone_whatsapp?: null }).phone_whatsapp
   delete (fallback as { notify_session_invite_email?: boolean }).notify_session_invite_email
   delete (fallback as { notify_session_invite_whatsapp?: boolean }).notify_session_invite_whatsapp
   delete (fallback as { notify_session_calendar_reminders?: boolean }).notify_session_calendar_reminders
-  const retry = await sb.from('businesses').insert(fallback)
+  const retry = await sb.from('businesses').insert(fallback).select('*').single()
+  insertedRow = retry.data as Business | null
   error = retry.error
 }
 if (error) { setSaving(false); setErr(error.message); toast('Failed to create profile', 'error'); return }
+created = (insertedRow as Business | null) || undefined
+setSaving(false); onSaved(created); return
 }
 setSaving(false); onSaved()
 }
