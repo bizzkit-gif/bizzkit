@@ -192,13 +192,19 @@ toast('Connected with ' + biz.name + '!')
 }
 
 if (loading) return <div style={{ display:'flex', justifyContent:'center', padding:'60px 0' }}><div className="spinner" /></div>
-if (editing && isOwn) return <BizForm existing={biz||undefined} onSaved={async () => {
+if (editing && isOwn) return <BizForm existing={biz||undefined} onSaved={async (created) => {
   setEditing(false)
+  if (created) setBiz(created)
   const refreshed = await refreshBiz()
   if (refreshed) setBiz(refreshed)
   toast(biz?'Profile updated!':'Profile created!')
 }} onCancel={() => setEditing(false)} />
-if (isOwn && !myBiz) return <BizForm onSaved={async () => {
+if (isOwn && !myBiz) return <BizForm onSaved={async (created) => {
+  if (created) {
+    setBiz(created)
+    toast('Profile created!')
+    return
+  }
   const refreshed = await refreshBiz()
   if (refreshed) {
     setBiz(refreshed)
@@ -622,7 +628,7 @@ return (
 
 // ── BIZ FORM ──────────────────────────────────────────────────────
 function BizForm({ existing, onSaved, onCancel }: { existing?:Business; onSaved:(created?:Business)=>void; onCancel?:()=>void }) {
-const { user, toast } = useApp()
+const { user, toast, setMyBizLocal } = useApp()
 const [name, setName] = useState(existing?.name||'')
 const [tagline, setTagline] = useState(existing?.tagline||'')
 const [desc, setDesc] = useState(existing?.description||'')
@@ -762,6 +768,7 @@ if (error && isSessionNotifySchemaError(error.message)) {
 }
 if (error) { setSaving(false); setErr(error.message); toast('Failed to create profile', 'error'); return }
 created = (insertedRow as Business | null) || undefined
+if (created) setMyBizLocal(created)
 setSaving(false); onSaved(created); return
 }
 setSaving(false); onSaved()

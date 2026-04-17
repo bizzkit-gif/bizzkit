@@ -10,6 +10,7 @@ type ToastType = 'success' | 'error' | 'info'
 type Ctx = {
   user: any
   myBiz: Business | null
+  setMyBizLocal: (biz: Business | null) => void
   loading: boolean
   /** True when local/session storage already has Supabase auth JSON (first paint can match logged-in shell). */
   bootLikelyAuthed: boolean
@@ -335,7 +336,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AppCtx.Provider value={{
-      user, myBiz, loading, bootLikelyAuthed,
+      user, myBiz, setMyBizLocal: setMyBiz, loading, bootLikelyAuthed,
       tab, setTab, prevTab, setPrevTab,
       viewId, setViewId,
       chatWith, setChatWith,
