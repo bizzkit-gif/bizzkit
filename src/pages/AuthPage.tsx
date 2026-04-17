@@ -12,6 +12,47 @@ type QuickBizFields = {
   description: string
 }
 
+const PENDING_QUICK_BIZ_KEY = 'bizzkit.pendingQuickBiz.v1'
+
+type PendingQuickBiz = {
+  userId: string
+  email: string
+  fields: QuickBizFields
+  savedAt: number
+}
+
+function readPendingQuickBiz(): PendingQuickBiz | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(PENDING_QUICK_BIZ_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as PendingQuickBiz
+    if (!parsed || typeof parsed !== 'object') return null
+    if (!parsed.userId || !parsed.email || !parsed.fields) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writePendingQuickBiz(value: PendingQuickBiz): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(PENDING_QUICK_BIZ_KEY, JSON.stringify(value))
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function clearPendingQuickBiz(): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.removeItem(PENDING_QUICK_BIZ_KEY)
+  } catch {
+    /* ignore */
+  }
+}
+
 async function trySaveOptionalBusinessProfile(
   userId: string,
   f: QuickBizFields
@@ -167,12 +208,30 @@ export default function AuthPage() {
           return
         }
         if (data.user) {
-          const save = await trySaveOptionalBusinessProfile(data.user.id, quickBiz())
+          const pending = readPendingQuickBiz()
+          const pendingForUser =
+            pending &&
+            pending.userId === data.user.id &&
+            pending.email === email.trim().toLowerCase()
+              ? pending.fields
+              : null
+          const save = await trySaveOptionalBusinessProfile(data.user.id, pendingForUser || quickBiz())
           if (!save.ok && save.error) {
             toast(save.error, 'error')
+            if (pendingForUser) {
+              toast('We could not restore your pending business profile yet. Please retry after login.', 'info', 5200)
+            }
           } else if (!save.skipped) {
             await refreshBiz()
-            toast('Business profile saved.', 'success')
+            if (pendingForUser) {
+              toast('Business profile restored and saved.', 'success')
+            } else {
+              toast('Business profile saved.', 'success')
+            }
+            clearPendingQuickBiz()
+          } else if (pendingForUser) {
+            // If profile already exists now, no need to keep stale draft.
+            clearPendingQuickBiz()
           }
         }
       } else {
@@ -204,8 +263,20 @@ export default function AuthPage() {
             await refreshBiz()
             toast('Business profile saved.', 'success')
           }
+          clearPendingQuickBiz()
         } else if (data.user && !data.session) {
-          toast('Confirm your email from your inbox, then log in to finish your profile.', 'info', 5200)
+          const draft = quickBiz()
+          if (draft.name.trim()) {
+            writePendingQuickBiz({
+              userId: data.user.id,
+              email: email.trim().toLowerCase(),
+              fields: draft,
+              savedAt: Date.now(),
+            })
+            toast('Confirm email from inbox. Your business profile draft is saved and will auto-restore on first login.', 'info', 6200)
+          } else {
+            toast('Confirm your email from your inbox, then log in to finish your profile.', 'info', 5200)
+          }
         }
       }
     } catch (e: unknown) {
