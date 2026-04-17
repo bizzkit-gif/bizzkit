@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useLayoutEffect } from 'react'
 import { useApp } from './context/ctx'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import AuthPage from './pages/AuthPage'
@@ -39,22 +39,99 @@ function MainBottomNav({ dimmed }: { dimmed?: boolean }) {
   )
 }
 
+/** Same chrome as Home while auth hydrates — avoids a second “blank” after HTML boot splash. */
+function HomeSessionBootChrome() {
+  return (
+    <div style={{ paddingBottom: 16 }}>
+      <div className="topbar">
+        <div className="logo-txt">
+          bizz<span>kit</span>
+        </div>
+        <div className="icon-btn" aria-hidden style={{ opacity: 0.85 }}>
+          🔔
+        </div>
+      </div>
+      <div className="search-wrap" aria-hidden style={{ opacity: 0.7 }}>
+        <span style={{ fontSize: 15, color: '#7A92B0' }}>🔍</span>
+        <span style={{ flex: 1, fontSize: 13, color: '#5A7088' }}> </span>
+      </div>
+      <div
+        style={{
+          margin: '0 16px 12px',
+          display: 'flex',
+          background: '#152236',
+          borderRadius: 12,
+          padding: 4,
+          border: '1px solid rgba(255,255,255,0.07)',
+          gap: 2,
+        }}
+        aria-hidden
+      >
+        {(['Home', 'Explore', 'Connected'] as const).map((label, i) => (
+          <div
+            key={label}
+            style={{
+              flex: 1,
+              borderRadius: 9,
+              padding: '8px 6px',
+              textAlign: 'center',
+              fontSize: 10.5,
+              fontWeight: 700,
+              background: i === 0 ? '#1E7EF7' : 'transparent',
+              color: i === 0 ? '#fff' : '#7A92B0',
+            }}
+          >
+            {label}
+          </div>
+        ))}
+      </div>
+      <div className="chips" aria-hidden style={{ opacity: 0.65, pointerEvents: 'none' }}>
+        {['All', 'Technology', 'Retail', 'Finance'].map((c) => (
+          <div key={c} className="chip">
+            {c}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const { user, loading, bootLikelyAuthed, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
 
+  useLayoutEffect(() => {
+    if (!loading) {
+      const splash = document.getElementById('bk-pwa-splash')
+      splash?.parentNode?.removeChild(splash)
+    }
+  }, [loading])
+
   /** Until the first session resolves, `user` is null — do not render Auth (logged-in users would flash login → app on cold start / PWA). */
   if (loading) {
+    if (bootLikelyAuthed) {
+      return (
+        <div className="shell">
+          <div className="screen-area">
+            <div className="screen">
+              <HomeSessionBootChrome />
+            </div>
+          </div>
+          <MainBottomNav dimmed />
+        </div>
+      )
+    }
     return (
       <div className="shell">
         <div className="screen-area">
           <div className="screen">
             <div className="loading">
-              <div className="loading-logo">Biz<span>z</span>kit</div>
+              <div className="loading-logo">
+                Biz<span>z</span>kit
+              </div>
               <div className="spinner" aria-hidden />
             </div>
           </div>
         </div>
-        {bootLikelyAuthed ? <MainBottomNav dimmed /> : null}
       </div>
     )
   }

@@ -27,10 +27,71 @@
   <title>Bizzkit</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=optional" rel="stylesheet" />
+  <style>
+    /* First paint before JS/CSS bundle — avoids black frame on iOS PWA cold start */
+    #bk-pwa-splash{position:fixed;inset:0;z-index:2147483646;background:#0A1628;display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;}
+    #bk-pwa-splash .bk-mid{flex:1;min-height:0;background:#0A1628;}
+    #bk-pwa-splash .bk-top{padding:max(14px,env(safe-area-inset-top,0px)) 18px 10px;display:flex;align-items:center;justify-content:space-between;}
+    #bk-pwa-splash .bk-logo{font-size:22px;font-weight:800;color:#1E7EF7;letter-spacing:-0.02em;}
+    #bk-pwa-splash .bk-logo span{color:#FF6B35;}
+    #bk-pwa-splash .bk-bell{width:38px;height:38px;border-radius:12px;background:#152236;border:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:center;font-size:16px;}
+    #bk-pwa-splash .bk-search{margin:0 16px 13px;height:44px;border-radius:14px;background:#152236;border:1px solid rgba(255,255,255,0.07);}
+    #bk-pwa-splash .bk-tabs{margin:0 16px 12px;height:38px;border-radius:12px;background:#152236;border:1px solid rgba(255,255,255,0.07);}
+    #bk-pwa-splash .bk-nav{flex-shrink:0;height:calc(64px + env(safe-area-inset-bottom,0px));background:rgba(8,18,36,0.97);border-top:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-around;padding:6px 0 max(6px,env(safe-area-inset-bottom,0px));}
+    #bk-pwa-splash .bk-ni{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1;}
+    #bk-pwa-splash .bk-ico{width:44px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:17px;background:#1E7EF7;}
+    #bk-pwa-splash .bk-lbl{font-size:9.5px;font-weight:600;color:#1E7EF7;}
+    #bk-pwa-splash .bk-ni.off .bk-ico{background:transparent;}
+    #bk-pwa-splash .bk-ni.off .bk-lbl{color:#7A92B0;}
+  </style>
 </head>
 <body style="margin:0;padding:0;background:#0A1628;overflow:hidden;">
+  <script>
+    (function () {
+      try {
+        var key = 'sb-ganberetmowmaidioryu-auth-token'
+        var mode = null
+        try { mode = localStorage.getItem('bizzkit.auth.storageMode') } catch (e) {}
+        var raw = null
+        if (mode === 'session') {
+          try { raw = sessionStorage.getItem(key) } catch (e2) {}
+        } else {
+          try { raw = localStorage.getItem(key) || sessionStorage.getItem(key) } catch (e3) {}
+        }
+        if (!raw) return
+        try {
+          var o = JSON.parse(raw)
+          if (!o || (typeof o.access_token !== 'string' && typeof o.refresh_token !== 'string')) return
+        } catch (e4) { return }
+        var el = document.createElement('div')
+        el.id = 'bk-pwa-splash'
+        el.setAttribute('aria-hidden', 'true')
+        el.innerHTML =
+          '<div class="bk-top"><div class="bk-logo">bizz<span>kit</span></div><div class="bk-bell" role="presentation">🔔</div></div>' +
+          '<div class="bk-search" role="presentation"></div>' +
+          '<div class="bk-tabs" role="presentation"></div>' +
+          '<div class="bk-mid" role="presentation"></div>' +
+          '<div class="bk-nav" role="presentation">' +
+          '<div class="bk-ni"><div class="bk-ico">🏠</div><span class="bk-lbl">Home</span></div>' +
+          '<div class="bk-ni off"><div class="bk-ico">📅</div><span class="bk-lbl">Connect</span></div>' +
+          '<div class="bk-ni off"><div class="bk-ico">🎲</div><span class="bk-lbl">Random</span></div>' +
+          '<div class="bk-ni off"><div class="bk-ico">💬</div><span class="bk-lbl">Messages</span></div>' +
+          '<div class="bk-ni off"><div class="bk-ico">🏢</div><span class="bk-lbl">Profile</span></div>' +
+          '</div>'
+        document.body.insertBefore(el, document.body.firstChild)
+      } catch (err) {}
+    })()
+  </script>
   <div id="root" style="min-height:100dvh;min-height:-webkit-fill-available;background:#0A1628;"></div>
   <script type="module" src="/src/main.tsx"></script>
+  <script>
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        var s = document.getElementById('bk-pwa-splash')
+        if (s) s.parentNode.removeChild(s)
+      }, 12000)
+    })
+  </script>
 </body>
 </html>
