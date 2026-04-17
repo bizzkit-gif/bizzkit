@@ -81,10 +81,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
-    const { error } = await sb.auth.signOut()
+    const { error } = await sb.auth.signOut({ scope: 'local' })
     if (error) {
+      // Keep going: local UI/session state should still reset even if remote revocation fails.
       toast(error.message, 'error')
-      return
     }
     setTab('feed')
     setPrevTab('feed')

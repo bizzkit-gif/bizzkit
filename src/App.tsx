@@ -11,7 +11,7 @@ import NotificationSettingsPage from './pages/NotificationSettingsPage'
 const NAV = [
   { id:'feed',       icon:'🏠', label:'Home'    },
   { id:'conference', icon:'📅', label:'Connect' },
-  { id:'random',     icon:'🎲', label:'Random'  },
+  { id:'random',     icon:'🎲', label:'Explore' },
   { id:'messages',   icon:'💬', label:'Messages' },
   { id:'profile',    icon:'🏢', label:'Profile' },
 ]

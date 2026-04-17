@@ -69,8 +69,10 @@ const runDeleteAccount = async () => {
     return
   }
   const typed = window.prompt(`To confirm, type exactly:\n${DELETE_ACCOUNT_CONFIRM}`)
-  if (typed !== DELETE_ACCOUNT_CONFIRM) {
-    if (typed !== null && typed.trim() !== '') toast('Text did not match — account was not deleted.', 'error')
+  const normalizedTyped = (typed || '').trim().toUpperCase()
+  const normalizedConfirm = DELETE_ACCOUNT_CONFIRM.trim().toUpperCase()
+  if (!normalizedTyped || normalizedTyped !== normalizedConfirm) {
+    if (typed !== null) toast('Text did not match — account was not deleted.', 'error')
     return
   }
   setDeleteAccountBusy(true)
