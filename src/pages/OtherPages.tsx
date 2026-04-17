@@ -714,18 +714,46 @@ setErr(''); return true
 const save = async () => {
 if (!validate() || !user) return
 setSaving(true)
+const isSessionNotifySchemaError = (message: string): boolean => {
+  const m = message.toLowerCase()
+  return (
+    m.includes('notify_session_invite_email') ||
+    m.includes('notify_session_invite_whatsapp') ||
+    m.includes('notify_session_calendar_reminders') ||
+    m.includes('phone_whatsapp')
+  )
+}
 const data = {
   owner_id:user.id, name:name.trim(), tagline:tagline.trim(), description:desc.trim(), industry:ind, type, city:city.trim(), country, website:website.trim(), founded:founded.trim(), logo:logoUrl||lgo, grad:GRADS[0], trust_score:existing?.trust_score||45, trust_tier:existing?.trust_tier||'Bronze', kyc_verified:existing?.kyc_verified||false, certified:existing?.certified||false,
+  followers: existing?.followers || 0,
   phone_whatsapp: null,
   notify_session_invite_email: existing ? existing.notify_session_invite_email !== false : true,
   notify_session_invite_whatsapp: false,
   notify_session_calendar_reminders: existing ? existing.notify_session_calendar_reminders !== false : true,
 }
 if (existing) {
-const { error } = await sb.from('businesses').update(data).eq('id', existing.id)
+let { error } = await sb.from('businesses').update(data).eq('id', existing.id)
+if (error && isSessionNotifySchemaError(error.message)) {
+  const fallback = { ...data } as Omit<typeof data, 'phone_whatsapp' | 'notify_session_invite_email' | 'notify_session_invite_whatsapp' | 'notify_session_calendar_reminders'>
+  delete (fallback as { phone_whatsapp?: null }).phone_whatsapp
+  delete (fallback as { notify_session_invite_email?: boolean }).notify_session_invite_email
+  delete (fallback as { notify_session_invite_whatsapp?: boolean }).notify_session_invite_whatsapp
+  delete (fallback as { notify_session_calendar_reminders?: boolean }).notify_session_calendar_reminders
+  const retry = await sb.from('businesses').update(fallback).eq('id', existing.id)
+  error = retry.error
+}
 if (error) { setSaving(false); setErr(error.message); toast('Failed to save profile', 'error'); return }
 } else {
-const { error } = await sb.from('businesses').insert(data).select().single()
+let { error } = await sb.from('businesses').insert(data)
+if (error && isSessionNotifySchemaError(error.message)) {
+  const fallback = { ...data } as Omit<typeof data, 'phone_whatsapp' | 'notify_session_invite_email' | 'notify_session_invite_whatsapp' | 'notify_session_calendar_reminders'>
+  delete (fallback as { phone_whatsapp?: null }).phone_whatsapp
+  delete (fallback as { notify_session_invite_email?: boolean }).notify_session_invite_email
+  delete (fallback as { notify_session_invite_whatsapp?: boolean }).notify_session_invite_whatsapp
+  delete (fallback as { notify_session_calendar_reminders?: boolean }).notify_session_calendar_reminders
+  const retry = await sb.from('businesses').insert(fallback)
+  error = retry.error
+}
 if (error) { setSaving(false); setErr(error.message); toast('Failed to create profile', 'error'); return }
 }
 setSaving(false); onSaved()

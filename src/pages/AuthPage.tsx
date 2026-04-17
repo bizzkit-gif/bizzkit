@@ -77,6 +77,7 @@ async function trySaveOptionalBusinessProfile(
     trust_tier: 'Bronze',
     kyc_verified: false,
     certified: false,
+    followers: 0,
   })
   if (error) return { ok: false, skipped: false, error: error.message }
   return { ok: true, skipped: false }
