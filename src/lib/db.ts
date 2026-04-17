@@ -97,11 +97,14 @@ export async function deleteMyAccount(confirm: string): Promise<{ ok: true } | {
   if (confirm !== DELETE_ACCOUNT_CONFIRM) {
     return { ok: false, error: `Confirmation must be exactly: ${DELETE_ACCOUNT_CONFIRM}` }
   }
-  const { data: sessionData } = await sb.auth.getSession()
-  const token = sessionData.session?.access_token
-  if (!token) {
-    return { ok: false, error: 'Not signed in.' }
+  let { data: sessionData } = await sb.auth.getSession()
+  // PWA/Safari can hold a stale access token. Refresh once so Edge Function auth does not 401.
+  if (!sessionData.session?.access_token) {
+    const { data: refreshed } = await sb.auth.refreshSession()
+    sessionData = refreshed
   }
+  const token = sessionData.session?.access_token
+  if (!token) return { ok: false, error: 'Session expired. Please log in again and retry.' }
   try {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/delete-account`, {
       method: 'POST',
@@ -114,6 +117,9 @@ export async function deleteMyAccount(confirm: string): Promise<{ ok: true } | {
     })
     const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
     if (!res.ok) {
+      if (res.status === 401) {
+        return { ok: false, error: 'Session expired. Please log in again and retry.' }
+      }
       return { ok: false, error: body.error || `Delete failed (${res.status})` }
     }
     if (body && typeof body.error === 'string' && body.error) {
