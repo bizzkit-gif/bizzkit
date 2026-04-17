@@ -134,7 +134,23 @@ export async function deleteMyAccount(confirm: string): Promise<{ ok: true } | {
   }
 
   if (result.error) {
-    const msg = result.error.message || ''
+    let msg = result.error.message || ''
+    const errWithContext = result.error as unknown as { context?: unknown }
+    const ctx = errWithContext.context
+    if (ctx instanceof Response) {
+      const status = ctx.status
+      let bodyMsg = ''
+      try {
+        const parsed = (await ctx.clone().json()) as { error?: string; message?: string }
+        bodyMsg = parsed.error || parsed.message || ''
+      } catch {
+        bodyMsg = (await ctx.clone().text().catch(() => '')) || ''
+      }
+      msg = [msg, bodyMsg].filter(Boolean).join(' — ') || `Delete failed (${status})`
+      if (status === 401) {
+        return { ok: false, error: 'Session expired. Please log out and log in again, then retry.' }
+      }
+    }
     if (msg.toLowerCase().includes('401') || msg.toLowerCase().includes('unauthorized')) {
       return { ok: false, error: 'Session expired. Please log out and log in again, then retry.' }
     }
