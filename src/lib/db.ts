@@ -98,27 +98,38 @@ export async function deleteMyAccount(confirm: string): Promise<{ ok: true } | {
     return { ok: false, error: `Confirmation must be exactly: ${DELETE_ACCOUNT_CONFIRM}` }
   }
   let { data: sessionData } = await sb.auth.getSession()
-  // PWA/Safari can hold a stale access token. Refresh once so Edge Function auth does not 401.
   if (!sessionData.session?.access_token) {
     const { data: refreshed } = await sb.auth.refreshSession()
     sessionData = refreshed
   }
-  const token = sessionData.session?.access_token
+  let token = sessionData.session?.access_token
   if (!token) return { ok: false, error: 'Session expired. Please log in again and retry.' }
-  try {
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/delete-account`, {
+
+  const callDelete = async (accessToken: string): Promise<Response> => {
+    return fetch(`${SUPABASE_URL}/functions/v1/delete-account`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${accessToken}`,
         apikey: SUPABASE_ANON_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ confirm: DELETE_ACCOUNT_CONFIRM }),
     })
+  }
+
+  try {
+    let res = await callDelete(token)
+    if (res.status === 401) {
+      // Access token may be stale on iOS PWA resume. Refresh and retry once.
+      const { data: refreshed } = await sb.auth.refreshSession()
+      token = refreshed.session?.access_token || ''
+      if (!token) return { ok: false, error: 'Session expired. Please log in again and retry.' }
+      res = await callDelete(token)
+    }
     const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
     if (!res.ok) {
       if (res.status === 401) {
-        return { ok: false, error: 'Session expired. Please log in again and retry.' }
+        return { ok: false, error: 'Session expired. Please log out and log in again, then retry.' }
       }
       return { ok: false, error: body.error || `Delete failed (${res.status})` }
     }
