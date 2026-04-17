@@ -108,24 +108,24 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         ownBizId ? sb.from('chats').select('participant_a,participant_b').or(`participant_a.eq.${ownBizId},participant_b.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] })
       ])
       let businesses = (businessesRes.data || []) as Business[]
-      if (!businesses.length || !!businessesRes.error) {
-        const { data: sessData } = await sb.auth.getSession()
-        const token = sessData.session?.access_token || ''
-        if (token) {
-          const fallbackRes = await fetch(`${SUPABASE_URL}/functions/v1/list-feed-businesses`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              apikey: SUPABASE_ANON_KEY,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({}),
-          })
-          if (fallbackRes.ok) {
-            const body = (await fallbackRes.json().catch(() => ({}))) as { rows?: Business[] }
-            businesses = (body.rows || []) as Business[]
-          }
+      const { data: sessData } = await sb.auth.getSession()
+      const token = sessData.session?.access_token || ''
+      if (token) {
+        const fallbackRes = await fetch(`${SUPABASE_URL}/functions/v1/list-feed-businesses`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            apikey: SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        })
+        if (fallbackRes.ok) {
+          const body = (await fallbackRes.json().catch(() => ({}))) as { rows?: Business[] }
+          businesses = (body.rows || []) as Business[]
         }
+      } else if (!businesses.length || !!businessesRes.error) {
+        businesses = []
       }
 
       if (!active) return

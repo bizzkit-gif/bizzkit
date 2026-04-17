@@ -45,7 +45,7 @@ serve(async (req: Request) => {
 
     const { data: rows, error } = await admin
       .from("businesses")
-      .select("id,name,tagline,industry,city,country,type,logo,logo_url,kyc_verified,trust_score,products(id,name,emoji,price,category)")
+      .select("id,owner_id,name,tagline,industry,city,country,type,logo,logo_url,kyc_verified,trust_score,products(id,name,emoji,price,category)")
       .order("trust_score", { ascending: false });
     if (error) {
       return new Response(JSON.stringify({ error: error.message }), {
@@ -54,7 +54,22 @@ serve(async (req: Request) => {
       });
     }
 
-    return new Response(JSON.stringify({ rows: rows || [] }), {
+    const ownerIds = Array.from(
+      new Set((rows || []).map((r: { owner_id?: string | null }) => (r.owner_id || "").trim()).filter(Boolean))
+    );
+    const validOwnerIds = new Set<string>();
+    await Promise.all(
+      ownerIds.map(async (ownerId) => {
+        const { data: owner, error: ownerErr } = await admin.auth.admin.getUserById(ownerId);
+        if (!ownerErr && owner?.user?.id) validOwnerIds.add(owner.user.id);
+      })
+    );
+    const filtered = (rows || []).filter((r: { owner_id?: string | null }) => {
+      const oid = (r.owner_id || "").trim();
+      return !!oid && validOwnerIds.has(oid);
+    });
+
+    return new Response(JSON.stringify({ rows: filtered }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

@@ -145,22 +145,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           .from('businesses')
           .select('*,products(id,name,emoji,price,category)')
           .eq('owner_id', user.id)
+          .order('updated_at', { ascending: false })
+          .limit(1)
           .maybeSingle()
         nextBiz = (data as Business | null) || null
         if (nextBiz?.id || attempt === 3) break
         await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)))
       }
-      setMyBiz(nextBiz)
+      // Keep the previous profile on transient misses so UI doesn't jump back to "Create Profile".
+      if (nextBiz?.id) setMyBiz(nextBiz)
       if (em) {
         if (nextBiz?.id) setEmailHasProfile(em)
-        else clearEmailHasProfile(em)
+        else if (!myBiz?.id) clearEmailHasProfile(em)
       }
-      return nextBiz
+      return nextBiz || myBiz || null
     } catch {
-      setMyBiz(null)
-      return null
+      return myBiz || null
     }
-  }, [user])
+  }, [user, myBiz, setMyBiz])
 
   useEffect(() => {
     const timeout = setTimeout(() => setLoading(false), 3000)
