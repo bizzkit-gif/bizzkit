@@ -98,19 +98,31 @@ export async function deleteMyAccount(confirm: string): Promise<{ ok: true } | {
     return { ok: false, error: `Confirmation must be exactly: ${DELETE_ACCOUNT_CONFIRM}` }
   }
   const { data: sessionData } = await sb.auth.getSession()
-  if (!sessionData.session?.access_token) {
+  const token = sessionData.session?.access_token
+  if (!token) {
     return { ok: false, error: 'Not signed in.' }
   }
-  const { data, error } = await sb.functions.invoke<{ ok?: boolean; error?: string }>('delete-account', {
-    body: { confirm: DELETE_ACCOUNT_CONFIRM },
-  })
-  if (error) {
-    return { ok: false, error: error.message || 'Delete account failed' }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/delete-account`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ confirm: DELETE_ACCOUNT_CONFIRM }),
+    })
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
+    if (!res.ok) {
+      return { ok: false, error: body.error || `Delete failed (${res.status})` }
+    }
+    if (body && typeof body.error === 'string' && body.error) {
+      return { ok: false, error: body.error }
+    }
+    return { ok: true }
+  } catch {
+    return { ok: false, error: 'Delete request failed. Check network and try again.' }
   }
-  if (data && typeof data === 'object' && 'error' in data && typeof (data as { error?: string }).error === 'string') {
-    return { ok: false, error: (data as { error: string }).error }
-  }
-  return { ok: true }
 }
 
 /** Prefix in chat messages used to signal an incoming Random video call invite. */
