@@ -297,14 +297,18 @@ export default function AuthPage() {
           <input type="password" placeholder={mode === 'register' ? 'Min. 6 characters' : '••••••••'} value={pw} onChange={(e) => setPw(e.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: -2, marginBottom: mode === 'login' ? 10 : 12, flexWrap: 'wrap' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, color: '#C8D4E8', fontWeight: 600, userSelect: 'none' }}>
+          <label
+            htmlFor="auth-keep-logged-in"
+            style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: '#C8D4E8', fontWeight: 600, userSelect: 'none', flex: '0 1 auto', minWidth: 0 }}
+          >
             <input
+              id="auth-keep-logged-in"
               type="checkbox"
               checked={keepLoggedIn}
               onChange={(e) => setKeepLoggedIn(e.target.checked)}
-              style={{ width: 16, height: 16, accentColor: '#1E7EF7', cursor: 'pointer' }}
+              style={{ flexShrink: 0, width: 18, height: 18, accentColor: '#1E7EF7', cursor: 'pointer', margin: 0 }}
             />
-            Keep me logged in
+            <span>Keep me logged in</span>
           </label>
           {mode === 'login' && (
             <button type="button" onClick={sendReset} disabled={sendingReset} style={{ background: 'none', border: 'none', color: '#4D9DFF', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0, marginLeft: 'auto' }}>
