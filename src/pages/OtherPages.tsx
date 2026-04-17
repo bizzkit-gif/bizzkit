@@ -733,6 +733,14 @@ const isSessionNotifySchemaError = (message: string): boolean => {
     m.includes('phone_whatsapp')
   )
 }
+const isDuplicateOwnerError = (message: string): boolean => {
+  const m = message.toLowerCase()
+  return (
+    m.includes('duplicate key value') ||
+    m.includes('duplicate') ||
+    m.includes('already exists')
+  ) && m.includes('owner_id')
+}
 const data = {
   owner_id:user.id, name:name.trim(), tagline:tagline.trim(), description:desc.trim(), industry:ind, type, city:city.trim(), country, website:website.trim(), founded:founded.trim(), logo:logoUrl||lgo, grad:GRADS[0], trust_score:existing?.trust_score||45, trust_tier:existing?.trust_tier||'Bronze', kyc_verified:existing?.kyc_verified||false, certified:existing?.certified||false,
   followers: existing?.followers || 0,
@@ -765,6 +773,23 @@ if (error && isSessionNotifySchemaError(error.message)) {
   const retry = await sb.from('businesses').insert(fallback).select('*').single()
   insertedRow = retry.data as Business | null
   error = retry.error
+}
+if (error && isDuplicateOwnerError(error.message)) {
+  const { data: existingBiz } = await sb
+    .from('businesses')
+    .select('*')
+    .eq('owner_id', user.id)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (existingBiz) {
+    const picked = existingBiz as Business
+    setMyBizLocal(picked)
+    setSaving(false)
+    toast('You already have a profile. Opening it now.', 'info')
+    onSaved(picked)
+    return
+  }
 }
 if (error) { setSaving(false); setErr(error.message); toast('Failed to create profile', 'error'); return }
 created = (insertedRow as Business | null) || undefined
