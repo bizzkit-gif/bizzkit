@@ -97,60 +97,55 @@ export async function deleteMyAccount(confirm: string): Promise<{ ok: true } | {
   if (confirm !== DELETE_ACCOUNT_CONFIRM) {
     return { ok: false, error: `Confirmation must be exactly: ${DELETE_ACCOUNT_CONFIRM}` }
   }
-  let { data: sessionData } = await sb.auth.getSession()
-  if (!sessionData.session?.access_token) {
-    const { data: refreshed } = await sb.auth.refreshSession()
-    sessionData = refreshed
+  const { data: userData, error: userErr } = await sb.auth.getUser()
+  if (userErr || !userData.user) {
+    return { ok: false, error: 'Session expired. Please log out and log in again, then retry.' }
   }
-  let token = sessionData.session?.access_token
-  if (!token) return { ok: false, error: 'Session expired. Please log in again and retry.' }
 
-  const callDelete = async (accessToken: string): Promise<Response> => {
-    return fetch(`${SUPABASE_URL}/functions/v1/delete-account`, {
-      method: 'POST',
+  const getToken = async (): Promise<string> => {
+    let { data: sessionData } = await sb.auth.getSession()
+    if (!sessionData.session?.access_token) {
+      const { data: refreshed } = await sb.auth.refreshSession()
+      sessionData = refreshed
+    }
+    return sessionData.session?.access_token || ''
+  }
+
+  const runInvoke = async (accessToken: string) => {
+    return sb.functions.invoke<{ ok?: boolean; error?: string }>('delete-account', {
+      body: { confirm: DELETE_ACCOUNT_CONFIRM },
       headers: {
         Authorization: `Bearer ${accessToken}`,
         apikey: SUPABASE_ANON_KEY,
-        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ confirm: DELETE_ACCOUNT_CONFIRM }),
     })
   }
 
-  try {
-    let res = await callDelete(token)
-    if (res.status === 401) {
-      // Access token may be stale on iOS PWA resume. Refresh and retry once.
-      const { data: refreshed } = await sb.auth.refreshSession()
-      token = refreshed.session?.access_token || ''
-      if (!token) return { ok: false, error: 'Session expired. Please log in again and retry.' }
-      res = await callDelete(token)
-      if (res.status === 401) {
-        // Fallback path: let supabase-js attach auth through its internal pipeline.
-        const viaInvoke = await sb.functions.invoke<{ ok?: boolean; error?: string }>('delete-account', {
-          body: { confirm: DELETE_ACCOUNT_CONFIRM },
-        })
-        if (!viaInvoke.error) {
-          const d = viaInvoke.data
-          if (!d || typeof d.error !== 'string') return { ok: true }
-          return { ok: false, error: d.error }
-        }
-      }
-    }
-    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string }
-    if (!res.ok) {
-      if (res.status === 401) {
-        return { ok: false, error: 'Session expired. Please log out and log in again, then retry.' }
-      }
-      return { ok: false, error: body.error || `Delete failed (${res.status})` }
-    }
-    if (body && typeof body.error === 'string' && body.error) {
-      return { ok: false, error: body.error }
-    }
-    return { ok: true }
-  } catch {
-    return { ok: false, error: 'Delete request failed. Check network and try again.' }
+  let token = await getToken()
+  if (!token) return { ok: false, error: 'Session expired. Please log out and log in again, then retry.' }
+
+  let result = await runInvoke(token)
+  if (result.error) {
+    // iOS/PWA can hold stale token on resume; refresh and retry once.
+    await sb.auth.refreshSession()
+    token = await getToken()
+    if (!token) return { ok: false, error: 'Session expired. Please log out and log in again, then retry.' }
+    result = await runInvoke(token)
   }
+
+  if (result.error) {
+    const msg = result.error.message || ''
+    if (msg.toLowerCase().includes('401') || msg.toLowerCase().includes('unauthorized')) {
+      return { ok: false, error: 'Session expired. Please log out and log in again, then retry.' }
+    }
+    return { ok: false, error: msg || 'Delete account failed' }
+  }
+
+  const payload = result.data
+  if (payload && typeof payload.error === 'string' && payload.error) {
+    return { ok: false, error: payload.error }
+  }
+  return { ok: true }
 }
 
 /** Prefix in chat messages used to signal an incoming Random video call invite. */
