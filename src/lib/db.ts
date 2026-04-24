@@ -202,6 +202,10 @@ export function displayChatMessageText(text: string | null | undefined): string 
     const rest = t.replace(/^\[CONF_SESSION_INVITE\]:[^\s]+\s+/, '')
     return rest.trim() || t
   }
+  if (t.startsWith('[CONF_MISSED:') || t.startsWith('[CONF_REMINDER:')) {
+    const rest = t.replace(/^\[CONF_(?:MISSED|REMINDER):[^\]]+\]\s*/, '')
+    return rest.trim() || t
+  }
   return t
 }
 
