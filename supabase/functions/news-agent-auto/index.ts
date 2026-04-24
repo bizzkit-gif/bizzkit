@@ -39,6 +39,35 @@ function stripHtml(raw: string): string {
   return decodeHtml(raw).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function normalizeArticleText(raw: string): string {
+  return stripHtml(raw).replace(/\s+/g, " ").trim();
+}
+
+async function fetchArticleReadableText(articleUrl: string, fallback: string): Promise<string> {
+  try {
+    const res = await fetch(articleUrl, {
+      headers: { "User-Agent": "bizzkit-news-agent/1.0" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return fallback;
+    const html = await res.text();
+    const cleaned = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
+    const paragraphs = (cleaned.match(/<p[^>]*>[\s\S]*?<\/p>/gi) || [])
+      .map((p) => normalizeArticleText(p))
+      .filter((p) => p.length > 60);
+    const merged = paragraphs.slice(0, 18).join("\n\n").trim();
+    if (merged.length >= 260) return merged;
+    const bodyMatch = cleaned.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] || cleaned;
+    const bodyText = normalizeArticleText(bodyMatch).slice(0, 5000).trim();
+    return bodyText.length >= 260 ? bodyText : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function summarizeLikeInShorts(text: string): string {
   const cleaned = stripHtml(text);
   if (!cleaned) return "";
@@ -111,6 +140,8 @@ serve(async (req: Request) => {
       });
     }
 
+    const body = (await req.json().catch(() => ({}))) as { force?: boolean };
+    const forceRefresh = body.force === true;
     const admin = createClient(supabaseUrl, serviceKey);
     const now = Date.now();
     const allRows: ParsedNews[] = [];
@@ -122,7 +153,7 @@ serve(async (req: Request) => {
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const shouldRefreshGlobal = !existingGlobal?.created_at
+    const shouldRefreshGlobal = forceRefresh || !existingGlobal?.created_at
       || (now - new Date(existingGlobal.created_at).getTime()) > NEWS_REFRESH_MS;
 
     if (shouldRefreshGlobal) {
@@ -130,13 +161,14 @@ serve(async (req: Request) => {
       for (const item of globalRss.slice(0, 12)) {
         if (!item.title || !item.link) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
+        const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
         allRows.push({
           title: stripHtml(item.title),
           articleUrl: item.link,
           sourceName: item.source || "Reuters",
           publishedAt: item.pubDate || new Date().toISOString(),
           summary: summarizeLikeInShorts(bodyText),
-          fullText: stripHtml(bodyText),
+          fullText,
           industry: industryFromText(bodyText),
           scope: "global",
           city: null,
@@ -177,7 +209,7 @@ serve(async (req: Request) => {
         .limit(1)
         .maybeSingle();
 
-      const shouldRefreshLocal = !existingLocal?.created_at
+      const shouldRefreshLocal = forceRefresh || !existingLocal?.created_at
         || (now - new Date(existingLocal.created_at).getTime()) > NEWS_REFRESH_MS;
       if (!shouldRefreshLocal) continue;
 
@@ -186,13 +218,14 @@ serve(async (req: Request) => {
       for (const item of localRss.slice(0, 8)) {
         if (!item.title || !item.link) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
+        const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
         allRows.push({
           title: stripHtml(item.title),
           articleUrl: item.link,
           sourceName: "Google News",
           publishedAt: item.pubDate || new Date().toISOString(),
           summary: summarizeLikeInShorts(bodyText),
-          fullText: stripHtml(bodyText),
+          fullText,
           industry: industryFromText(bodyText),
           scope: "local",
           city: target.city,
