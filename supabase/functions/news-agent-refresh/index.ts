@@ -25,6 +25,13 @@ const BUSINESS_INCLUDE = /(business|economy|economic|market|startup|funding|fina
 const NON_BUSINESS_EXCLUDE = /(weather|storm|rainfall|snow|hurricane|cyclone|thunderstorm|heatwave|temperature|forecast|climate alert|air quality|pollen|wildfire|earthquake|flood warning)/i;
 const RUSSIAN_EXCLUDE = /(?:\b(russia|russian|moscow|kremlin|putin|россия|русск|москва|кремл|путин)\b|[\u0400-\u04FF])/i;
 const LIVEMINT_ONLY = /livemint\.com/i;
+const LIVEMINT_FEEDS = [
+  "https://www.livemint.com/rss/news",
+  "https://www.livemint.com/rss/companies",
+  "https://www.livemint.com/rss/markets",
+  "https://www.livemint.com/rss/money",
+  "https://www.livemint.com/rss/industry",
+];
 
 function normalizeLocation(input: unknown): string {
   return typeof input === "string" ? input.trim().toLowerCase() : "";
@@ -220,6 +227,19 @@ function isLiveMintItem(item: Record<string, string>): boolean {
   return LIVEMINT_ONLY.test(blob);
 }
 
+async function fetchLiveMintItems(): Promise<Array<Record<string, string>>> {
+  const all = await Promise.all(LIVEMINT_FEEDS.map((u) => fetchRss(u)));
+  const byLink = new Map<string, Record<string, string>>();
+  for (const list of all) {
+    for (const item of list || []) {
+      if (!item?.title || !item?.link) continue;
+      if (!isLiveMintItem(item)) continue;
+      if (!byLink.has(item.link)) byLink.set(item.link, item);
+    }
+  }
+  return Array.from(byLink.values());
+}
+
 async function fetchRss(url: string): Promise<Array<Record<string, string>>> {
   try {
     const res = await fetch(url, { headers: { "User-Agent": "bizzkit-news-agent/1.0" } });
@@ -310,7 +330,7 @@ serve(async (req: Request) => {
     const allRows: ParsedNews[] = [];
 
     if (shouldRefreshGlobal) {
-      const globalRss = await fetchRss("https://news.google.com/rss/search?q=global%20business%20news%20site%3Alivemint.com&hl=en-US&gl=US&ceid=US:en");
+      const globalRss = await fetchLiveMintItems();
       const fallbackGlobal: ParsedNews[] = [];
       for (const item of globalRss.slice(0, 12)) {
         if (!item.title || !item.link) continue;
@@ -356,10 +376,14 @@ serve(async (req: Request) => {
     }
 
     if (shouldRefreshLocal) {
-      const query = encodeURIComponent(`${city} ${country} business`);
-      const localRss = await fetchRss(`https://news.google.com/rss/search?q=${query}%20site%3Alivemint.com&hl=en-US&gl=US&ceid=US:en`);
+      const localRss = await fetchLiveMintItems();
       const fallbackLocal: ParsedNews[] = [];
-      for (const item of localRss.slice(0, 10)) {
+      const localFiltered = localRss.filter((item) => {
+        const blob = `${item.title || ""} ${item.description || ""}`.toLowerCase();
+        return blob.includes(city) || blob.includes(country);
+      });
+      const localPool = localFiltered.length ? localFiltered : localRss;
+      for (const item of localPool.slice(0, 10)) {
         if (!item.title || !item.link) continue;
         if (!isLiveMintItem(item)) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
@@ -423,19 +447,61 @@ serve(async (req: Request) => {
       published_at: new Date(n.publishedAt).toISOString(),
       dedupe_hash: hashKey(`${n.scope}|${n.city || ""}|${n.country || ""}|${n.articleUrl}`),
     }));
+    const dedupedPayload = Array.from(new Map(payload.map((p) => [p.dedupe_hash, p])).values());
 
-    const { error: upsertErr } = await admin
-      .from("news_cards")
-      .upsert(payload, { onConflict: "dedupe_hash", ignoreDuplicates: false });
+    const globalRows = dedupedPayload.filter((p) => p.scope === "global");
+    const localRows = dedupedPayload.filter((p) => p.scope === "local");
 
-    if (upsertErr) {
-      return new Response(JSON.stringify({ error: upsertErr.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (globalRows.length > 0) {
+      const { error: delGlobalErr } = await admin.from("news_cards").delete().eq("scope", "global");
+      if (delGlobalErr) {
+        return new Response(JSON.stringify({ error: delGlobalErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { error: insGlobalErr } = await admin
+        .from("news_cards")
+        .upsert(globalRows, { onConflict: "dedupe_hash", ignoreDuplicates: false });
+      if (insGlobalErr) {
+        return new Response(JSON.stringify({ error: insGlobalErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
-    return new Response(JSON.stringify({ ok: true, refreshed: true, inserted: payload.length, key: localKey }), {
+    if (localRows.length > 0) {
+      const localKeys = Array.from(
+        new Set(localRows.map((r) => `${r.city || ""}|${r.country || ""}`)),
+      );
+      for (const key of localKeys) {
+        const [c, k] = key.split("|");
+        const { error: delLocalErr } = await admin
+          .from("news_cards")
+          .delete()
+          .eq("scope", "local")
+          .eq("city", c || "")
+          .eq("country", k || "");
+        if (delLocalErr) {
+          return new Response(JSON.stringify({ error: delLocalErr.message }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+      const { error: insLocalErr } = await admin
+        .from("news_cards")
+        .upsert(localRows, { onConflict: "dedupe_hash", ignoreDuplicates: false });
+      if (insLocalErr) {
+        return new Response(JSON.stringify({ error: insLocalErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    return new Response(JSON.stringify({ ok: true, refreshed: true, inserted: dedupedPayload.length, key: localKey }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
