@@ -26,6 +26,7 @@ type NewsCard = {
 type FeedMixedItem =
   | { id: string; type: 'post'; createdAt: string; post: { id: string; business_id: string; content: string; media_url: string | null; media_type: string | null; created_at: string } }
   | { id: string; type: 'news'; createdAt: string; news: NewsCard }
+  | { id: string; type: 'suggested'; createdAt: string; businessIds: string[] }
 
 const normalizeLogoImage = (value?: string | null): string | null => {
   if (!value) return null
@@ -355,6 +356,13 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     const textMatch = matchesSearchText(blob, search)
     return industryOk && textMatch
   })
+  const suggestedConnections = discoverBase
+    .filter((b) => {
+      const mf = filter === 'All' || b.industry === filter
+      const ms = matchesSearchText(businessSearchBlob(b), search)
+      return mf && ms
+    })
+    .slice(0, 3)
 
   const mixedFeedItems = useMemo<FeedMixedItem[]>(() => {
     const postItems: FeedMixedItem[] = connectionFeedPosts.map((post) => ({
@@ -376,10 +384,20 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         news,
       }))
 
-    return [...postItems, ...newsItems].sort(
+    const mixed = [...postItems, ...newsItems].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     )
-  }, [connectionFeedPosts, newsCards, filter, search])
+    if (suggestedConnections.length && !search.trim()) {
+      const suggestedItem: FeedMixedItem = {
+        id: `suggested:${suggestedConnections.map((b) => b.id).join(',')}`,
+        type: 'suggested',
+        createdAt: new Date(Date.now() - 1).toISOString(),
+        businessIds: suggestedConnections.map((b) => b.id),
+      }
+      mixed.splice(Math.min(2, mixed.length), 0, suggestedItem)
+    }
+    return mixed
+  }, [connectionFeedPosts, newsCards, filter, search, suggestedConnections])
 
   const onLikeFeedPost = async (postId: string) => {
     if (!myBiz) {
@@ -567,6 +585,42 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                             >
                               {likedPostIds.has(p.id) ? 'Liked' : likingPostIds.has(p.id) ? 'Liking…' : 'Like'} {likesByPostId[p.id] ?? 0}
                             </button>
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    if (item.type === 'suggested') {
+                      const suggestedBiz = item.businessIds
+                        .map((id) => bizById.get(normalizeUuid(id)))
+                        .filter((b): b is Business => !!b)
+                      if (!suggestedBiz.length) return null
+                      return (
+                        <div key={item.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.1)', marginBottom:10 }}>
+                          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:10 }}>
+                            <h4 style={{ margin:0, fontSize:13.5, fontFamily:'Syne, sans-serif' }}>Suggested Connections</h4>
+                            <span style={{ fontSize:10, color:'#7A92B0' }}>Based on your feed</span>
+                          </div>
+                          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                            {suggestedBiz.map((b) => {
+                              const isConn = conns.has(normalizeUuid(b.id))
+                              const logoSrc = normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)
+                              const bizName = cleanDisplayText(b.name) || 'Business'
+                              return (
+                                <div key={b.id} style={{ display:'flex', alignItems:'center', gap:8, background:'#0F1D31', borderRadius:10, padding:8, border:'1px solid rgba(255,255,255,0.06)' }}>
+                                  <div className={grad(b.id)} onClick={() => onView(b.id)} style={{ width:34, height:34, borderRadius:9, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:11, color:'#fff', flexShrink:0, cursor:'pointer', overflow:'hidden' }}>
+                                    {logoSrc ? <img src={logoSrc} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' as const }} /> : logoInitials(bizName)}
+                                  </div>
+                                  <div style={{ flex:1, minWidth:0, cursor:'pointer' }} onClick={() => onView(b.id)}>
+                                    <div style={{ fontSize:12.5, fontWeight:700 }}>{bizName}</div>
+                                    <div style={{ fontSize:10, color:'#7A92B0' }}>{cleanDisplayText(b.industry)} · {cleanDisplayText(b.city)}</div>
+                                  </div>
+                                  <button onClick={() => doConnect(b)} className={`btn btn-sm ${isConn?'btn-ghost':'btn-blue'}`} style={{ flexShrink:0 }}>
+                                    {isConn ? 'Disconnect' : 'Connect'}
+                                  </button>
+                                </div>
+                              )
+                            })}
                           </div>
                         </div>
                       )
