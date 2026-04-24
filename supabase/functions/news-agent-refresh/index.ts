@@ -24,6 +24,7 @@ const NEWS_REFRESH_MS = 20 * 60 * 1000;
 const BUSINESS_INCLUDE = /(business|economy|economic|market|startup|funding|finance|bank|stock|ipo|industry|manufactur|retail|company|companies|trade|investment|investor|merger|acquisition|supply chain|logistics|b2b|enterprise)/i;
 const NON_BUSINESS_EXCLUDE = /(weather|storm|rainfall|snow|hurricane|cyclone|thunderstorm|heatwave|temperature|forecast|climate alert|air quality|pollen|wildfire|earthquake|flood warning)/i;
 const RUSSIAN_EXCLUDE = /(?:\b(russia|russian|moscow|kremlin|putin|россия|русск|москва|кремл|путин)\b|[\u0400-\u04FF])/i;
+const LIVEMINT_ONLY = /livemint\.com/i;
 
 function normalizeLocation(input: unknown): string {
   return typeof input === "string" ? input.trim().toLowerCase() : "";
@@ -214,6 +215,11 @@ function parseRssItems(xml: string): Array<Record<string, string>> {
   }));
 }
 
+function isLiveMintItem(item: Record<string, string>): boolean {
+  const blob = `${item.link || ""} ${item.source || ""} ${item.description || ""} ${item.title || ""}`;
+  return LIVEMINT_ONLY.test(blob);
+}
+
 async function fetchRss(url: string): Promise<Array<Record<string, string>>> {
   try {
     const res = await fetch(url, { headers: { "User-Agent": "bizzkit-news-agent/1.0" } });
@@ -304,17 +310,18 @@ serve(async (req: Request) => {
     const allRows: ParsedNews[] = [];
 
     if (shouldRefreshGlobal) {
-      const globalRss = await fetchRss("https://news.google.com/rss/search?q=global%20business%20news&hl=en-US&gl=US&ceid=US:en");
+      const globalRss = await fetchRss("https://news.google.com/rss/search?q=global%20business%20news%20site%3Alivemint.com&hl=en-US&gl=US&ceid=US:en");
       const fallbackGlobal: ParsedNews[] = [];
       for (const item of globalRss.slice(0, 12)) {
         if (!item.title || !item.link) continue;
+        if (!isLiveMintItem(item)) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
         const cleanedTitle = stripSourceTail(stripUrlsAndDomains(stripHtml(item.title)));
         const fallbackSummary = buildSummary(cleanedTitle, stripHtml(bodyText), bodyText);
         fallbackGlobal.push({
           title: cleanedTitle,
           articleUrl: item.link,
-          sourceName: item.source || "Reuters",
+          sourceName: "LiveMint",
           publishedAt: item.pubDate || new Date().toISOString(),
           summary: fallbackSummary,
           fullText: stripHtml(bodyText),
@@ -332,7 +339,7 @@ serve(async (req: Request) => {
         allRows.push({
           title: stripSourceTail(stripUrlsAndDomains(stripHtml(item.title))),
           articleUrl: item.link,
-          sourceName: item.source || "Reuters",
+          sourceName: "LiveMint",
           publishedAt: item.pubDate || new Date().toISOString(),
           summary,
           fullText,
@@ -350,17 +357,18 @@ serve(async (req: Request) => {
 
     if (shouldRefreshLocal) {
       const query = encodeURIComponent(`${city} ${country} business`);
-      const localRss = await fetchRss(`https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`);
+      const localRss = await fetchRss(`https://news.google.com/rss/search?q=${query}%20site%3Alivemint.com&hl=en-US&gl=US&ceid=US:en`);
       const fallbackLocal: ParsedNews[] = [];
       for (const item of localRss.slice(0, 10)) {
         if (!item.title || !item.link) continue;
+        if (!isLiveMintItem(item)) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
         const cleanedTitle = stripSourceTail(stripUrlsAndDomains(stripHtml(item.title)));
         const fallbackSummary = buildSummary(cleanedTitle, stripHtml(bodyText), bodyText);
         fallbackLocal.push({
           title: cleanedTitle,
           articleUrl: item.link,
-          sourceName: "Google News",
+          sourceName: "LiveMint",
           publishedAt: item.pubDate || new Date().toISOString(),
           summary: fallbackSummary,
           fullText: stripHtml(bodyText),
@@ -378,7 +386,7 @@ serve(async (req: Request) => {
         allRows.push({
           title: stripSourceTail(stripUrlsAndDomains(stripHtml(item.title))),
           articleUrl: item.link,
-          sourceName: "Google News",
+          sourceName: "LiveMint",
           publishedAt: item.pubDate || new Date().toISOString(),
           summary,
           fullText,
