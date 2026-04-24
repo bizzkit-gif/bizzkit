@@ -21,11 +21,11 @@ const corsHeaders = {
 };
 
 const NEWS_REFRESH_MS = 20 * 60 * 1000;
-const BUSINESS_INCLUDE = /(business|economy|economic|market|startup|funding|finance|bank|stock|ipo|industry|manufactur|retail|company|companies|trade|investment|investor|merger|acquisition|supply chain|logistics|b2b|enterprise|earnings|revenue|profit|fiscal|quarter|q1|q2|q3|q4)/i;
+const BUSINESS_INCLUDE = /(business|economy|economic|market|startup|funding|finance|bank|stock|ipo|industry|manufactur|retail|company|companies|trade|investment|investor|merger|acquisition|supply chain|logistics|b2b|enterprise|earnings|revenue|profit|fiscal|quarter|q1|q2|q3|q4|shareholder|valuation|capital|debt|credit|inflation|gdp|exports|imports)/i;
 const NON_BUSINESS_EXCLUDE = /(weather|storm|rainfall|snow|hurricane|cyclone|thunderstorm|heatwave|temperature|forecast|climate alert|air quality|pollen|wildfire|earthquake|flood warning)/i;
 const RUSSIAN_EXCLUDE = /(?:\b(russia|russian|moscow|kremlin|putin|россия|русск|москва|кремл|путин)\b|[\u0400-\u04FF])/i;
 const LIVEMINT_ONLY = /livemint\.com/i;
-const LIVEMINT_BUSINESS_PATH = /\/(companies|markets|industry|money|economy|technology|startup|companies\/news|market\/stock-market-news)\//i;
+const LIVEMINT_BUSINESS_PATH = /\/(companies|markets|industry|money|economy|companies\/news|market\/stock-market-news)\//i;
 const LIVEMINT_FEEDS = [
   "https://www.livemint.com/rss/news",
   "https://www.livemint.com/rss/companies",
@@ -191,8 +191,8 @@ function isBusinessNews(text: string, articleUrl: string): boolean {
   if (RUSSIAN_EXCLUDE.test(t)) return false;
   const byText = BUSINESS_INCLUDE.test(t);
   const byPath = LIVEMINT_BUSINESS_PATH.test(articleUrl || "");
-  const looksSubstantive = t.length >= 120;
-  return byText || byPath || looksSubstantive;
+  // Strict mode: must satisfy both business semantics and business section URL.
+  return byText && byPath;
 }
 
 function industryFromText(text: string): string {
