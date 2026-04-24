@@ -367,7 +367,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       localRows.forEach((n) => map.set(n.id, n))
       const uniqueByHeadline = new Map<string, NewsCard>()
       Array.from(map.values()).forEach((n) => {
-        const key = `${n.scope}:${n.city || ''}:${n.country || ''}:${normalizeNewsHeadlineKey(n.title)}`
+        const key = normalizeNewsHeadlineKey(n.title)
         uniqueByHeadline.set(key, n)
       })
       const merged = Array.from(uniqueByHeadline.values())

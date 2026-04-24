@@ -190,7 +190,8 @@ function isBusinessNews(text: string, articleUrl: string): boolean {
   if (RUSSIAN_EXCLUDE.test(t)) return false;
   const byText = BUSINESS_INCLUDE.test(t);
   const byPath = LIVEMINT_BUSINESS_PATH.test(articleUrl || "");
-  return byText || byPath;
+  const looksSubstantive = t.length >= 120;
+  return byText || byPath || looksSubstantive;
 }
 
 function industryFromText(text: string): string {
@@ -461,9 +462,6 @@ serve(async (req: Request) => {
     for (const row of byUrl) {
       const rowHeadline = normalizedHeadlineKey(row.title || "");
       const duplicate = dedupedPayload.find((x) => {
-        if (x.scope !== row.scope) return false;
-        if ((x.city || "") !== (row.city || "")) return false;
-        if ((x.country || "") !== (row.country || "")) return false;
         const xHeadline = normalizedHeadlineKey(x.title || "");
         return headlineSimilarity(xHeadline, rowHeadline) >= 0.72;
       });
@@ -472,9 +470,6 @@ serve(async (req: Request) => {
     const fallbackPool = byUrl.filter((row) => {
       const rowHeadline = normalizedHeadlineKey(row.title || "");
       const duplicate = dedupedPayload.find((x) => {
-        if (x.scope !== row.scope) return false;
-        if ((x.city || "") !== (row.city || "")) return false;
-        if ((x.country || "") !== (row.country || "")) return false;
         const xHeadline = normalizedHeadlineKey(x.title || "");
         return headlineSimilarity(xHeadline, rowHeadline) >= 0.72;
       });
