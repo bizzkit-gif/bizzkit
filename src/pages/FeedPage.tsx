@@ -16,6 +16,7 @@ type NewsCard = {
   country: string | null
   title: string
   summary: string
+  full_text: string
   source_name: string
   article_url: string
   image_url: string | null
@@ -88,6 +89,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     created_at: string
   }>>([])
   const [newsCards, setNewsCards] = useState<NewsCard[]>([])
+  const [openNewsletterNewsId, setOpenNewsletterNewsId] = useState<string | null>(null)
   const [likesByPostId, setLikesByPostId] = useState<Record<string, number>>({})
   const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set())
   const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set())
@@ -228,7 +230,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
       const { data: globalRows } = await sb
         .from('news_cards')
-        .select('id,scope,city,country,title,summary,source_name,article_url,image_url,industry,published_at')
+        .select('id,scope,city,country,title,summary,full_text,source_name,article_url,image_url,industry,published_at')
         .eq('scope', 'global')
         .order('published_at', { ascending: false })
         .limit(20)
@@ -237,7 +239,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       if (city && country) {
         const { data } = await sb
           .from('news_cards')
-          .select('id,scope,city,country,title,summary,source_name,article_url,image_url,industry,published_at')
+          .select('id,scope,city,country,title,summary,full_text,source_name,article_url,image_url,industry,published_at')
           .eq('scope', 'local')
           .eq('city', city)
           .eq('country', country)
@@ -399,6 +401,10 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     return mixed
   }, [connectionFeedPosts, newsCards, filter, search, suggestedConnections])
 
+  const openNewsletterNews = useMemo(
+    () => newsCards.find((n) => n.id === openNewsletterNewsId) || null,
+    [newsCards, openNewsletterNewsId],
+  )
   const onLikeFeedPost = async (postId: string) => {
     if (!myBiz) {
       toast('Create a business profile first', 'info')
@@ -642,7 +648,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                           <span style={{ fontSize:10, color:'#7A92B0' }}>Industry: {n.industry}</span>
                           <button
                             type="button"
-                            onClick={() => window.open(n.article_url, '_blank', 'noopener,noreferrer')}
+                            onClick={() => setOpenNewsletterNewsId(n.id)}
                             className="btn btn-sm btn-ghost"
                           >
                             Read more
@@ -773,6 +779,54 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
             </>
           )}
         </>
+      )}
+      {openNewsletterNews && (
+        <div
+          onClick={() => setOpenNewsletterNewsId(null)}
+          style={{
+            position:'fixed',
+            inset:0,
+            background:'rgba(3,8,16,0.7)',
+            zIndex:1200,
+            display:'flex',
+            alignItems:'flex-end',
+            justifyContent:'center',
+            padding:'12px 10px',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width:'100%',
+              maxWidth:560,
+              maxHeight:'84vh',
+              overflowY:'auto',
+              background:'#0F1D31',
+              border:'1px solid rgba(255,255,255,0.08)',
+              borderRadius:16,
+              padding:14,
+              boxShadow:'0 14px 40px rgba(0,0,0,0.35)',
+            }}
+          >
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
+              <div>
+                <div style={{ fontSize:10.5, color:'#7A92B0', fontWeight:700 }}>Full News</div>
+                <h3 style={{ margin:'4px 0 0', fontSize:15, lineHeight:1.35, fontFamily:'Syne, sans-serif' }}>{openNewsletterNews.title}</h3>
+              </div>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setOpenNewsletterNewsId(null)}>Close</button>
+            </div>
+
+            <div style={{ fontSize:11, color:'#7A92B0', marginBottom:10 }}>
+              {fmtDate(openNewsletterNews.published_at)}
+            </div>
+
+            <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, padding:10, marginBottom:10 }}>
+              <p style={{ margin:0, fontSize:13, lineHeight:1.7, whiteSpace:'pre-line' }}>
+                {(openNewsletterNews.full_text || openNewsletterNews.summary || '').trim()}
+              </p>
+            </div>
+          </div>
+        </div>
       )}
       <div style={{ height:8 }} />
     </div>

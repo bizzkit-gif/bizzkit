@@ -7,6 +7,7 @@ type ParsedNews = {
   sourceName: string;
   publishedAt: string;
   summary: string;
+  fullText: string;
   industry: string;
   scope: "global" | "local";
   city: string | null;
@@ -135,6 +136,7 @@ serve(async (req: Request) => {
           sourceName: item.source || "Reuters",
           publishedAt: item.pubDate || new Date().toISOString(),
           summary: summarizeLikeInShorts(bodyText),
+          fullText: stripHtml(bodyText),
           industry: industryFromText(bodyText),
           scope: "global",
           city: null,
@@ -190,6 +192,7 @@ serve(async (req: Request) => {
           sourceName: "Google News",
           publishedAt: item.pubDate || new Date().toISOString(),
           summary: summarizeLikeInShorts(bodyText),
+          fullText: stripHtml(bodyText),
           industry: industryFromText(bodyText),
           scope: "local",
           city: target.city,
@@ -211,6 +214,7 @@ serve(async (req: Request) => {
       country: n.country,
       title: n.title,
       summary: n.summary || n.title,
+      full_text: n.fullText || n.summary || n.title,
       source_name: n.sourceName,
       article_url: n.articleUrl,
       image_url: null,
