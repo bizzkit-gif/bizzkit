@@ -77,7 +77,9 @@ function isBusinessNewsCard(n: NewsCard): boolean {
   if (!liveMintOnly) return false
   const businessUrlPath = /\/(companies|markets|industry|money|economy|companies\/news|market\/stock-market-news)\//i.test(n.article_url || '')
   const businessText = /(business|economy|economic|market|startup|funding|finance|bank|stock|ipo|industry|manufactur|retail|company|companies|trade|investment|investor|merger|acquisition|supply chain|logistics|b2b|enterprise|earnings|revenue|profit|fiscal|quarter|q1|q2|q3|q4|shareholder|valuation|capital|debt|credit|inflation|gdp|exports|imports)/i.test(`${n.title} ${n.summary} ${n.full_text || ''}`)
-  if (!(businessUrlPath && businessText)) return false
+  if (!(businessUrlPath || businessText)) return false
+  const nonBusinessPolitics = /(pope|church|vatican|migrant|immigration|racist|racism|israel|iran|gaza|hamas|war|missile|airstrike|ceasefire|election|vote|campaign|parliament|congress|senate|prime minister|president|trump|biden|putin|zelensky|protest|riot)/i.test(`${n.title} ${n.summary} ${n.full_text || ''}`)
+  if (nonBusinessPolitics) return false
   const text = `${n.title} ${n.summary} ${n.full_text || ''}`.toLowerCase()
   const bad = /(weather|storm|rainfall|snow|hurricane|cyclone|thunderstorm|heatwave|temperature|forecast|climate alert|air quality|pollen|wildfire|earthquake|flood warning|russia|russian|moscow|kremlin|putin|россия|русск|москва|кремл|путин|[\u0400-\u04FF])/
   if (bad.test(text)) return false
@@ -184,6 +186,14 @@ function buildInShortsWriteup(n: NewsCard, maxChars: number): string {
   const text = (selected.join(' ') || base || '').trim()
   if (!text) return ''
   return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+function buildNewsTeaserOneLiner(n: NewsCard): string {
+  const longForm = buildInShortsWriteup(n, 420)
+  const firstSentence = (longForm.split(/(?<=[.!?])\s+/).find((s) => s.trim().length > 0) || longForm).trim()
+  const oneLine = firstSentence.replace(/\s+/g, ' ').trim()
+  if (oneLine.length <= 120) return oneLine
+  return `${oneLine.slice(0, 117).trimEnd()}...`
 }
 
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
@@ -805,7 +815,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                     }
 
                     const n = item.news
-                    const cardSummary = buildInShortsWriteup(n, 420)
+                    const cardSummary = buildNewsTeaserOneLiner(n)
                     return (
                       <div key={item.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(85,170,255,0.35)', marginBottom:10 }}>
                         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
@@ -816,7 +826,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                           <div style={{ fontSize:10, color:'#7A92B0' }}>{fmtDate(n.published_at)}</div>
                         </div>
                         <h4 style={{ margin:'0 0 6px', fontSize:14, lineHeight:1.35 }}>{stripNewsSourceNoise(n.title)}</h4>
-                        <p style={{ margin:'0 0 10px', fontSize:12.8, color:'#C9D6E5', lineHeight:1.6 }}>{cardSummary}</p>
+                        <p style={{ margin:'0 0 10px', fontSize:12.8, color:'#C9D6E5', lineHeight:1.5 }}>{cardSummary}</p>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8 }}>
                           <span style={{ fontSize:10, color:'#7A92B0' }}>Industry: {n.industry}</span>
                           <button
