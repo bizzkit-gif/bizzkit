@@ -81,10 +81,14 @@ function parseRssItems(xml: string): Array<Record<string, string>> {
 }
 
 async function fetchRss(url: string): Promise<Array<Record<string, string>>> {
-  const res = await fetch(url, { headers: { "User-Agent": "bizzkit-news-agent/1.0" } });
-  if (!res.ok) return [];
-  const xml = await res.text();
-  return parseRssItems(xml);
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "bizzkit-news-agent/1.0" } });
+    if (!res.ok) return [];
+    const xml = await res.text();
+    return parseRssItems(xml);
+  } catch {
+    return [];
+  }
 }
 
 serve(async (req: Request) => {
@@ -121,7 +125,7 @@ serve(async (req: Request) => {
       || (now - new Date(existingGlobal.created_at).getTime()) > NEWS_REFRESH_MS;
 
     if (shouldRefreshGlobal) {
-      const globalRss = await fetchRss("https://feeds.reuters.com/reuters/businessNews");
+      const globalRss = await fetchRss("https://news.google.com/rss/search?q=global%20business%20news&hl=en-US&gl=US&ceid=US:en");
       for (const item of globalRss.slice(0, 12)) {
         if (!item.title || !item.link) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
