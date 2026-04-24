@@ -86,6 +86,7 @@ function parseConferenceInviteMessage(text: string | null | undefined): ParsedCo
   // Fallback parser for plain invite text (no marker prefix).
   const lower = raw.toLowerCase()
   if (!lower.includes('invited you to join "') || !lower.includes('" on ') || !lower.includes(' at ')) return null
+  if (!lower.includes('accept or decline below')) return null
   const inviteMatch = raw.match(/invited you to join "(.+?)" on (.+?) at (.+?)\./i)
   if (!inviteMatch) return null
   if (lower.includes('you accepted this invite')) return { state: 'accepted' }
@@ -595,6 +596,7 @@ function ChatView({
     !!incomingCallPeer && !videoCallOpen && !!displayOther && displayOther.id === incomingCallPeer.id
 
   const handleSessionInviteAction = async (m: Msg, action: 'accept' | 'decline') => {
+    if (m.sender_id === myId) return
     const parsed = parseConferenceInviteMessage(m.text)
     if (!parsed) return
     if (sessionInviteBusyId) return
@@ -776,7 +778,10 @@ function ChatView({
             {g.msgs.map((m, i) => {
               const mine = m.sender_id === myId
               const sessionInvite = parseConferenceInviteMessage(m.text)
-              const showSessionInviteActions = !mine && sessionInvite?.state === 'pending'
+              const canRespondToInvite = !mine && !!sessionInvite
+              const showPendingInviteActions = canRespondToInvite && sessionInvite?.state === 'pending'
+              const showAcceptedState = canRespondToInvite && sessionInvite?.state === 'accepted'
+              const showDeclinedState = canRespondToInvite && sessionInvite?.state === 'declined'
               return (
                 <div key={m.id} style={{ display:'flex', flexDirection:mine?'row-reverse':'row', alignItems:'flex-end', gap:5, marginBottom:4 }}>
                   {!mine && displayOther && i === 0 && <div className={grad(displayOther.id)} style={{ width:26, height:26, borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#fff', flexShrink:0, overflow:'hidden' }}>
@@ -787,7 +792,7 @@ function ChatView({
                   {!mine && i > 0 && <div style={{ width:26, flexShrink:0 }} />}
                   <div style={{ maxWidth:'72%' }}>
                     <div style={{ padding:'8px 11px', borderRadius:mine?'14px 14px 4px 14px':'14px 14px 14px 4px', background:mine?'#1E7EF7':'#1A2D47', color:'#fff', fontSize:13, lineHeight:1.5, border:mine?'none':'1px solid rgba(255,255,255,0.07)' }}>{displayChatMessageText(m.text)}</div>
-                    {showSessionInviteActions && (
+                    {showPendingInviteActions && (
                       <div style={{ display:'flex', gap:6, marginTop:6 }}>
                         <button
                           type="button"
@@ -806,6 +811,46 @@ function ChatView({
                           onClick={() => { void handleSessionInviteAction(m, 'decline') }}
                         >
                           Decline
+                        </button>
+                      </div>
+                    )}
+                    {showAcceptedState && (
+                      <div style={{ display:'flex', gap:6, marginTop:6 }}>
+                        <button
+                          type="button"
+                          className="btn btn-green btn-sm"
+                          style={{ flex:1, padding:'6px 8px', opacity:0.9, cursor:'default' }}
+                          disabled
+                        >
+                          Accepted
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ flex:1, padding:'6px 8px', opacity:0.6, cursor:'default' }}
+                          disabled
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    )}
+                    {showDeclinedState && (
+                      <div style={{ display:'flex', gap:6, marginTop:6 }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          style={{ flex:1, padding:'6px 8px', opacity:0.6, cursor:'default' }}
+                          disabled
+                        >
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-red btn-sm"
+                          style={{ flex:1, padding:'6px 8px', opacity:0.9, cursor:'default' }}
+                          disabled
+                        >
+                          Declined
                         </button>
                       </div>
                     )}
