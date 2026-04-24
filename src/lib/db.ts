@@ -459,7 +459,7 @@ export const CONFERENCE_SESSION_INVITE_MARKER = '[CONF_SESSION_INVITE]'
 
 export function conferenceSessionInviteMessage(inviterName: string, conf: Conference): string {
   const head = `${CONFERENCE_SESSION_INVITE_MARKER}:${conf.id}`
-  return `${head} ${inviterName} invited you to join "${conf.title}" on ${fmtDate(conf.date)} at ${conf.time}.`
+  return `${head} ${inviterName} invited you to join "${conf.title}" on ${fmtDate(conf.date)} at ${conf.time}. Accept or Decline below.`
 }
 
 export type SessionExternalNotifyKind = 'invite' | 'reminder'
