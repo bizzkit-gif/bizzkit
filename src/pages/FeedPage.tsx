@@ -9,6 +9,24 @@ const FEED_BUSINESS_SELECT =
 const FEED_CACHE_PREFIX = 'bizzkit.feed.v2.'
 const FEED_CACHE_MS = 120_000
 
+type NewsCard = {
+  id: string
+  scope: 'global' | 'local'
+  city: string | null
+  country: string | null
+  title: string
+  summary: string
+  source_name: string
+  article_url: string
+  image_url: string | null
+  industry: string
+  published_at: string
+}
+
+type FeedMixedItem =
+  | { id: string; type: 'post'; createdAt: string; post: { id: string; business_id: string; content: string; media_url: string | null; media_type: string | null; created_at: string } }
+  | { id: string; type: 'news'; createdAt: string; news: NewsCard }
+
 const normalizeLogoImage = (value?: string | null): string | null => {
   if (!value) return null
   let v = value.trim()
@@ -68,6 +86,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     media_type: string | null
     created_at: string
   }>>([])
+  const [newsCards, setNewsCards] = useState<NewsCard[]>([])
   const [likesByPostId, setLikesByPostId] = useState<Record<string, number>>({})
   const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set())
   const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set())
@@ -187,6 +206,61 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       .then(({ data }) => setConnectionPosts((data as typeof connectionPosts) || []))
   }, [connKey, myBiz?.id])
 
+  useEffect(() => {
+    let active = true
+    const loadNews = async () => {
+      const city = (myBiz?.city || '').trim().toLowerCase()
+      const country = (myBiz?.country || '').trim().toLowerCase()
+      const { data: sessData } = await sb.auth.getSession()
+      const token = sessData.session?.access_token || ''
+      if (token) {
+        await fetch(`${SUPABASE_URL}/functions/v1/news-agent-refresh`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            apikey: SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ city, country }),
+        }).catch(() => undefined)
+      }
+
+      const { data: globalRows } = await sb
+        .from('news_cards')
+        .select('id,scope,city,country,title,summary,source_name,article_url,image_url,industry,published_at')
+        .eq('scope', 'global')
+        .order('published_at', { ascending: false })
+        .limit(20)
+
+      let localRows: NewsCard[] = []
+      if (city && country) {
+        const { data } = await sb
+          .from('news_cards')
+          .select('id,scope,city,country,title,summary,source_name,article_url,image_url,industry,published_at')
+          .eq('scope', 'local')
+          .eq('city', city)
+          .eq('country', country)
+          .order('published_at', { ascending: false })
+          .limit(20)
+        localRows = (data as NewsCard[]) || []
+      }
+
+      if (!active) return
+      const map = new Map<string, NewsCard>()
+      ;((globalRows as NewsCard[]) || []).forEach((n) => map.set(n.id, n))
+      localRows.forEach((n) => map.set(n.id, n))
+      const merged = Array.from(map.values()).sort(
+        (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime(),
+      )
+      setNewsCards(merged)
+    }
+
+    void loadNews()
+    return () => {
+      active = false
+    }
+  }, [myBiz?.city, myBiz?.country, user?.id])
+
   const feedPostIdsKey = useMemo(
     () => connectionPosts.map((p) => p.id).sort().join(','),
     [connectionPosts],
@@ -281,6 +355,31 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     const textMatch = matchesSearchText(blob, search)
     return industryOk && textMatch
   })
+
+  const mixedFeedItems = useMemo<FeedMixedItem[]>(() => {
+    const postItems: FeedMixedItem[] = connectionFeedPosts.map((post) => ({
+      id: `post:${post.id}`,
+      type: 'post',
+      createdAt: post.created_at,
+      post,
+    }))
+    const newsItems: FeedMixedItem[] = newsCards
+      .filter((news) => {
+        const filterOk = filter === 'All' || news.industry === filter
+        const textOk = matchesSearchText(`${news.title} ${news.summary} ${news.source_name}`, search)
+        return filterOk && textOk
+      })
+      .map((news) => ({
+        id: `news:${news.id}`,
+        type: 'news',
+        createdAt: news.published_at,
+        news,
+      }))
+
+    return [...postItems, ...newsItems].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    )
+  }, [connectionFeedPosts, newsCards, filter, search])
 
   const onLikeFeedPost = async (postId: string) => {
     if (!myBiz) {
@@ -413,58 +512,86 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>
       ) : (
         <>
-          {feedView === 'feed' && myBiz && (
+          {feedView === 'feed' && (
             <>
-              <div className="sec-hd"><h3>Your posts & connections</h3><span className="see-all">{connectionFeedPosts.length} posts</span></div>
-              {connectionFeedPosts.length === 0 ? (
+              <div className="sec-hd"><h3>Home feed</h3><span className="see-all">{mixedFeedItems.length} items</span></div>
+              {mixedFeedItems.length === 0 ? (
                 <div style={{ margin:'0 16px 14px', padding:'16px', background:'#152236', borderRadius:14, border:'1px solid rgba(255,255,255,0.07)', fontSize:12.5, color:'#7A92B0', textAlign:'center' }}>
-                  No posts yet. Share from your profile (Posts tab), and posts from businesses you connect with will appear here too.
+                  No feed items yet. Create your business profile to see connection posts. Business news cards are fetched automatically.
                 </div>
               ) : (
                 <div style={{ padding:'0 16px', marginBottom:14 }}>
-                  {connectionFeedPosts.map(p => {
-                    const b = bizById.get(normalizeUuid(p.business_id))
-                    const isOwn = myBiz ? normalizeUuid(p.business_id) === normalizeUuid(myBiz.id) : false
-                    const bizName = b ? cleanDisplayText(b.name) || 'Business' : 'Business'
-                    const logoSrc = b ? (normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)) : null
-                    return (
-                      <div key={p.id} style={{ background:'#152236', borderRadius:14, padding:13, border:`1px solid ${isOwn ? 'rgba(30,126,247,0.35)' : 'rgba(255,255,255,0.07)'}`, marginBottom:10 }}>
-                        <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:8 }}>
-                          <div className={grad(p.business_id)} onClick={() => onView(p.business_id)} style={{ width:36, height:36, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:12, color:'#fff', flexShrink:0, cursor:'pointer', overflow:'hidden' }}>
-                            {logoSrc ? <img src={logoSrc} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' as const }} /> : logoInitials(bizName)}
-                          </div>
-                          <div style={{ flex:1, minWidth:0 }}>
-                            <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
-                              <div style={{ fontFamily:'Syne, sans-serif', fontSize:13, fontWeight:700, cursor:'pointer' }} onClick={() => onView(p.business_id)}>{bizName}</div>
-                              {isOwn && <span style={{ fontSize:9, fontWeight:800, background:'#1E7EF7', color:'#fff', padding:'2px 6px', borderRadius:5 }}>You</span>}
+                  {mixedFeedItems.map(item => {
+                    if (item.type === 'post') {
+                      const p = item.post
+                      const b = bizById.get(normalizeUuid(p.business_id))
+                      const isOwn = myBiz ? normalizeUuid(p.business_id) === normalizeUuid(myBiz.id) : false
+                      const bizName = b ? cleanDisplayText(b.name) || 'Business' : 'Business'
+                      const logoSrc = b ? (normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)) : null
+                      return (
+                        <div key={item.id} style={{ background:'#152236', borderRadius:14, padding:13, border:`1px solid ${isOwn ? 'rgba(30,126,247,0.35)' : 'rgba(255,255,255,0.07)'}`, marginBottom:10 }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:8 }}>
+                            <div className={grad(p.business_id)} onClick={() => onView(p.business_id)} style={{ width:36, height:36, borderRadius:10, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:12, color:'#fff', flexShrink:0, cursor:'pointer', overflow:'hidden' }}>
+                              {logoSrc ? <img src={logoSrc} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' as const }} /> : logoInitials(bizName)}
                             </div>
-                            <div style={{ fontSize:10, color:'#7A92B0' }}>{fmtDate(p.created_at)}</div>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                                <div style={{ fontFamily:'Syne, sans-serif', fontSize:13, fontWeight:700, cursor:'pointer' }} onClick={() => onView(p.business_id)}>{bizName}</div>
+                                {isOwn && <span style={{ fontSize:9, fontWeight:800, background:'#1E7EF7', color:'#fff', padding:'2px 6px', borderRadius:5 }}>You</span>}
+                              </div>
+                              <div style={{ fontSize:10, color:'#7A92B0' }}>{fmtDate(p.created_at)}</div>
+                            </div>
+                          </div>
+                          {p.content ? <p style={{ fontSize:13, color:'#fff', lineHeight:1.55, margin:0 }}>{p.content}</p> : null}
+                          {p.media_url && (p.media_type === 'video' ? (
+                            <video src={p.media_url} controls style={{ width:'100%', borderRadius:10, maxHeight:240, marginTop:10, objectFit:'cover' as const }} />
+                          ) : (
+                            <img src={p.media_url} alt="" style={{ width:'100%', borderRadius:10, maxHeight:240, marginTop:10, objectFit:'cover' as const }} />
+                          ))}
+                          <div style={{ display:'flex', gap:8, marginTop:10, paddingTop:8, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
+                            <button
+                              type="button"
+                              onClick={() => onLikeFeedPost(p.id)}
+                              disabled={likedPostIds.has(p.id) || likingPostIds.has(p.id)}
+                              style={{
+                                flex:1,
+                                padding:'6px 0',
+                                background: likedPostIds.has(p.id) ? 'rgba(30,126,247,0.2)' : '#0A1628',
+                                border:'1px solid rgba(255,255,255,0.07)',
+                                borderRadius:9,
+                                color: likedPostIds.has(p.id) ? '#1E7EF7' : '#7A92B0',
+                                fontSize:12,
+                                fontWeight:600,
+                                cursor: likedPostIds.has(p.id) ? 'default' : 'pointer',
+                              }}
+                            >
+                              {likedPostIds.has(p.id) ? 'Liked' : likingPostIds.has(p.id) ? 'Liking…' : 'Like'} {likesByPostId[p.id] ?? 0}
+                            </button>
                           </div>
                         </div>
-                        {p.content ? <p style={{ fontSize:13, color:'#fff', lineHeight:1.55, margin:0 }}>{p.content}</p> : null}
-                        {p.media_url && (p.media_type === 'video' ? (
-                          <video src={p.media_url} controls style={{ width:'100%', borderRadius:10, maxHeight:240, marginTop:10, objectFit:'cover' as const }} />
-                        ) : (
-                          <img src={p.media_url} alt="" style={{ width:'100%', borderRadius:10, maxHeight:240, marginTop:10, objectFit:'cover' as const }} />
-                        ))}
-                        <div style={{ display:'flex', gap:8, marginTop:10, paddingTop:8, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
+                      )
+                    }
+
+                    const n = item.news
+                    return (
+                      <div key={item.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(85,170,255,0.35)', marginBottom:10 }}>
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                            <span style={{ fontSize:11, fontWeight:800, background:'#1E7EF7', color:'#fff', padding:'3px 7px', borderRadius:6 }}>News</span>
+                            <span style={{ fontSize:10, color:'#7A92B0' }}>{n.scope === 'local' ? 'Local' : 'Global'} · {n.source_name}</span>
+                          </div>
+                          <div style={{ fontSize:10, color:'#7A92B0' }}>{fmtDate(n.published_at)}</div>
+                        </div>
+                        <h4 style={{ margin:'0 0 6px', fontSize:14, lineHeight:1.35 }}>{n.title}</h4>
+                        <p style={{ margin:'0 0 10px', fontSize:12.5, color:'#C9D6E5', lineHeight:1.55 }}>{n.summary}</p>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8 }}>
+                          <span style={{ fontSize:10, color:'#7A92B0' }}>Industry: {n.industry}</span>
                           <button
                             type="button"
-                            onClick={() => onLikeFeedPost(p.id)}
-                            disabled={likedPostIds.has(p.id) || likingPostIds.has(p.id)}
-                            style={{
-                              flex:1,
-                              padding:'6px 0',
-                              background: likedPostIds.has(p.id) ? 'rgba(30,126,247,0.2)' : '#0A1628',
-                              border:'1px solid rgba(255,255,255,0.07)',
-                              borderRadius:9,
-                              color: likedPostIds.has(p.id) ? '#1E7EF7' : '#7A92B0',
-                              fontSize:12,
-                              fontWeight:600,
-                              cursor: likedPostIds.has(p.id) ? 'default' : 'pointer',
-                            }}
+                            onClick={() => window.open(n.article_url, '_blank', 'noopener,noreferrer')}
+                            className="btn btn-sm btn-ghost"
                           >
-                            {likedPostIds.has(p.id) ? 'Liked' : likingPostIds.has(p.id) ? 'Liking…' : 'Like'} {likesByPostId[p.id] ?? 0}
+                            Read more
                           </button>
                         </div>
                       </div>
@@ -473,14 +600,6 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                 </div>
               )}
             </>
-          )}
-
-          {feedView === 'feed' && !myBiz && (
-            <div className="empty" style={{ marginTop:8 }}>
-              <div className="ico">📝</div>
-              <h3>Create your profile</h3>
-              <p>Add a business profile to see your feed and posts from connections.</p>
-            </div>
           )}
 
           {!search && feedView === 'explore' && trending.length > 0 && (
