@@ -62,17 +62,40 @@ function normalizeMsgs(rows: Msg[] | null | undefined): Msg[] {
 
 type ConferenceInviteState = 'pending' | 'accepted' | 'declined'
 
-function parseConferenceInviteMessage(text: string | null | undefined): { conferenceId: string; state: ConferenceInviteState } | null {
+type ParsedConferenceInvite = {
+  conferenceId?: string
+  state: ConferenceInviteState
+  title?: string
+  dateLabel?: string
+  timeLabel?: string
+}
+
+function parseConferenceInviteMessage(text: string | null | undefined): ParsedConferenceInvite | null {
   const raw = typeof text === 'string' ? text.trim() : ''
-  if (!raw.startsWith(`${CONFERENCE_SESSION_INVITE_MARKER}:`)) return null
-  const body = raw.slice(CONFERENCE_SESSION_INVITE_MARKER.length + 1).trim()
-  const token = body.split(/\s+/, 1)[0] || ''
-  if (!token) return null
-  const [conferenceIdRaw, stateRaw] = token.split(':')
-  const conferenceId = (conferenceIdRaw || '').trim()
-  if (!conferenceId) return null
-  const state = stateRaw === 'accepted' || stateRaw === 'declined' ? stateRaw : 'pending'
-  return { conferenceId, state }
+  if (raw.startsWith(`${CONFERENCE_SESSION_INVITE_MARKER}:`)) {
+    const body = raw.slice(CONFERENCE_SESSION_INVITE_MARKER.length + 1).trim()
+    const token = body.split(/\s+/, 1)[0] || ''
+    if (!token) return null
+    const [conferenceIdRaw, stateRaw] = token.split(':')
+    const conferenceId = (conferenceIdRaw || '').trim()
+    if (!conferenceId) return null
+    const state = stateRaw === 'accepted' || stateRaw === 'declined' ? stateRaw : 'pending'
+    return { conferenceId, state }
+  }
+
+  // Fallback parser for plain invite text (no marker prefix).
+  const lower = raw.toLowerCase()
+  if (!lower.includes('invited you to join "') || !lower.includes('" on ') || !lower.includes(' at ')) return null
+  const inviteMatch = raw.match(/invited you to join "(.+?)" on (.+?) at (.+?)\./i)
+  if (!inviteMatch) return null
+  if (lower.includes('you accepted this invite')) return { state: 'accepted' }
+  if (lower.includes('you declined this invite')) return { state: 'declined' }
+  return {
+    state: 'pending',
+    title: inviteMatch[1]?.trim(),
+    dateLabel: inviteMatch[2]?.trim(),
+    timeLabel: inviteMatch[3]?.trim(),
+  }
 }
 
 export default function MessagesPage({ openWith, onClearOpen }: { openWith?: string|null; onClearOpen?: () => void }) {
@@ -578,7 +601,8 @@ function ChatView({
     setSessionInviteBusyId(m.id)
     try {
       if (action === 'decline') {
-        const text = `${CONFERENCE_SESSION_INVITE_MARKER}:${parsed.conferenceId}:declined You declined this invite.`
+        const confToken = parsed.conferenceId || 'unknown'
+        const text = `${CONFERENCE_SESSION_INVITE_MARKER}:${confToken}:declined You declined this invite.`
         const { error } = await sb.from('messages').update({ text }).eq('id', m.id)
         if (error) {
           toast('Could not decline invite: ' + error.message, 'error')
@@ -589,10 +613,28 @@ function ChatView({
         return
       }
 
+      let resolvedConferenceId = parsed.conferenceId || ''
+      if (!resolvedConferenceId && parsed.title && parsed.timeLabel) {
+        const { data: candidates } = await sb
+          .from('conferences')
+          .select('id,title,date,time,status,max_attendees,conference_attendees(business_id)')
+          .eq('title', parsed.title)
+          .eq('time', parsed.timeLabel)
+          .order('created_at', { ascending: false })
+          .limit(20)
+        const picked = (candidates || []).find((c: any) => !parsed.dateLabel || fmtDate(c.date) === parsed.dateLabel)
+        resolvedConferenceId = (picked?.id || '').trim()
+      }
+      if (!resolvedConferenceId) {
+        toast('Could not resolve this session. Open Connect to join manually.', 'info')
+        onOpenConference()
+        return
+      }
+
       const { data: conf, error: confErr } = await sb
         .from('conferences')
         .select('id,title,status,max_attendees,conference_attendees(business_id)')
-        .eq('id', parsed.conferenceId)
+        .eq('id', resolvedConferenceId)
         .maybeSingle()
       if (confErr) {
         toast('Could not open session: ' + confErr.message, 'error')
@@ -623,7 +665,7 @@ function ChatView({
         }
       }
 
-      const acceptedText = `${CONFERENCE_SESSION_INVITE_MARKER}:${parsed.conferenceId}:accepted You accepted this invite.`
+      const acceptedText = `${CONFERENCE_SESSION_INVITE_MARKER}:${resolvedConferenceId}:accepted You accepted this invite.`
       const { error: msgErr } = await sb.from('messages').update({ text: acceptedText }).eq('id', m.id)
       if (msgErr) {
         toast('Joined, but could not update invite state: ' + msgErr.message, 'info')
