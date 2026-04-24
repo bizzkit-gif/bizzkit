@@ -21,6 +21,9 @@ const corsHeaders = {
 };
 
 const NEWS_REFRESH_MS = 20 * 60 * 1000;
+const BUSINESS_INCLUDE = /(business|economy|economic|market|startup|funding|finance|bank|stock|ipo|industry|manufactur|retail|company|companies|trade|investment|investor|merger|acquisition|supply chain|logistics|b2b|enterprise)/i;
+const NON_BUSINESS_EXCLUDE = /(weather|storm|rainfall|snow|hurricane|cyclone|thunderstorm|heatwave|temperature|forecast|climate alert|air quality|pollen|wildfire|earthquake|flood warning)/i;
+const RUSSIAN_EXCLUDE = /(?:\b(russia|russian|moscow|kremlin|putin|россия|русск|москва|кремл|путин)\b|[\u0400-\u04FF])/i;
 
 function normalizeLocation(input: unknown): string {
   return typeof input === "string" ? input.trim().toLowerCase() : "";
@@ -58,15 +61,25 @@ async function fetchArticleReadableText(articleUrl: string, fallback: string): P
       .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
     const paragraphs = (cleaned.match(/<p[^>]*>[\s\S]*?<\/p>/gi) || [])
       .map((p) => normalizeArticleText(p))
-      .filter((p) => p.length > 60);
-    const merged = paragraphs.slice(0, 18).join("\n\n").trim();
-    if (merged.length >= 260) return merged;
+      .filter((p) => p.length > 40);
+    const merged = paragraphs.slice(0, 30).join("\n\n").trim();
+    if (merged.length >= 180) return merged;
     const bodyMatch = cleaned.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] || cleaned;
-    const bodyText = normalizeArticleText(bodyMatch).slice(0, 5000).trim();
-    return bodyText.length >= 260 ? bodyText : fallback;
+    const bodyText = normalizeArticleText(bodyMatch).slice(0, 9000).trim();
+    if (bodyText.length >= 180) return bodyText;
+    const fallbackCombined = `${fallback}\n\n${paragraphs.slice(0, 8).join("\n\n")}`.trim();
+    return fallbackCombined || fallback;
   } catch {
     return fallback;
   }
+}
+
+function isBusinessNews(text: string): boolean {
+  const t = stripHtml(text);
+  if (!t) return false;
+  if (NON_BUSINESS_EXCLUDE.test(t)) return false;
+  if (RUSSIAN_EXCLUDE.test(t)) return false;
+  return BUSINESS_INCLUDE.test(t);
 }
 
 function summarizeLikeInShorts(text: string): string {
@@ -205,7 +218,9 @@ serve(async (req: Request) => {
       for (const item of globalRss.slice(0, 12)) {
         if (!item.title || !item.link) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
+        if (!isBusinessNews(bodyText)) continue;
         const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
+        if (!isBusinessNews(`${bodyText} ${fullText}`)) continue;
         allRows.push({
           title: stripHtml(item.title),
           articleUrl: item.link,
@@ -228,7 +243,9 @@ serve(async (req: Request) => {
       for (const item of localRss.slice(0, 10)) {
         if (!item.title || !item.link) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
+        if (!isBusinessNews(bodyText)) continue;
         const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
+        if (!isBusinessNews(`${bodyText} ${fullText}`)) continue;
         allRows.push({
           title: stripHtml(item.title),
           articleUrl: item.link,

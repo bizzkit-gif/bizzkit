@@ -72,6 +72,12 @@ function matchesSearchText(haystack: string, rawQuery: string): boolean {
   return q.split(/\s+/).filter(Boolean).every((term) => h.includes(term))
 }
 
+function isBusinessNewsCard(n: NewsCard): boolean {
+  const text = `${n.title} ${n.summary} ${n.full_text || ''}`.toLowerCase()
+  const bad = /(weather|storm|rainfall|snow|hurricane|cyclone|thunderstorm|heatwave|temperature|forecast|climate alert|air quality|pollen|wildfire|earthquake|flood warning|russia|russian|moscow|kremlin|putin|россия|русск|москва|кремл|путин|[\u0400-\u04FF])/
+  return !bad.test(text)
+}
+
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
@@ -252,7 +258,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       const map = new Map<string, NewsCard>()
       ;((globalRows as NewsCard[]) || []).forEach((n) => map.set(n.id, n))
       localRows.forEach((n) => map.set(n.id, n))
-      const merged = Array.from(map.values()).sort(
+      const merged = Array.from(map.values())
+        .filter((n) => isBusinessNewsCard(n))
+        .sort(
         (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime(),
       )
       setNewsCards(merged)
@@ -822,7 +830,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
             <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, padding:10, marginBottom:10 }}>
               <p style={{ margin:0, fontSize:13, lineHeight:1.7, whiteSpace:'pre-line' }}>
-                {(openNewsletterNews.full_text || openNewsletterNews.summary || '').trim()}
+                {(openNewsletterNews.summary || '').trim()}
               </p>
             </div>
           </div>
