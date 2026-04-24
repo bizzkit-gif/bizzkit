@@ -97,6 +97,18 @@ function stripNewsSourceNoise(text: string): string {
     .trim()
 }
 
+function normalizeNewsHeadlineKey(text: string): string {
+  return stripNewsSourceNoise(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\b(the|a|an|to|for|of|in|on|at|with|from|by|and)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .slice(0, 14)
+    .join(' ')
+}
+
 function headlineLike(line: string, headline: string): boolean {
   const l = stripNewsSourceNoise(line).toLowerCase()
   const h = stripNewsSourceNoise(headline).toLowerCase()
@@ -353,7 +365,12 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       const map = new Map<string, NewsCard>()
       ;((globalRows as NewsCard[]) || []).forEach((n) => map.set(n.id, n))
       localRows.forEach((n) => map.set(n.id, n))
-      const merged = Array.from(map.values())
+      const uniqueByHeadline = new Map<string, NewsCard>()
+      Array.from(map.values()).forEach((n) => {
+        const key = `${n.scope}:${n.city || ''}:${n.country || ''}:${normalizeNewsHeadlineKey(n.title)}`
+        uniqueByHeadline.set(key, n)
+      })
+      const merged = Array.from(uniqueByHeadline.values())
         .filter((n) => isBusinessNewsCard(n))
         .sort(
         (a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime(),
