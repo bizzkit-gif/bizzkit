@@ -84,9 +84,19 @@ function isBusinessNews(text: string): boolean {
 function summarizeLikeInShorts(text: string): string {
   const cleaned = stripHtml(text);
   if (!cleaned) return "";
-  const sentences = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
-  const chosen = sentences.slice(0, 2).join(" ");
-  const clipped = (chosen || cleaned).trim();
+  const normalized = cleaned
+    .replace(/\s+-\s+[A-Za-z][A-Za-z .,&-]{2,30}\s*$/g, "")
+    .replace(/\b(?:read more|click here|watch live)\b/gi, "")
+    .trim();
+  const sentences = normalized
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 45 && s.length <= 260);
+  const ranked = sentences
+    .filter((s) => !/(copyright|all rights reserved|subscribe|newsletter)/i.test(s))
+    .slice(0, 8);
+  const chosen = ranked.slice(0, 2).join(" ");
+  const clipped = (chosen || ranked[0] || normalized).trim();
   if (clipped.length <= 185) return clipped;
   return `${clipped.slice(0, 182).trimEnd()}...`;
 }
@@ -176,13 +186,14 @@ serve(async (req: Request) => {
         const bodyText = `${item.title}. ${item.description || ""}`;
         if (!isBusinessNews(bodyText)) continue;
         const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
+        const summary = summarizeLikeInShorts(fullText || bodyText);
         if (!isBusinessNews(`${bodyText} ${fullText}`)) continue;
         allRows.push({
           title: stripHtml(item.title),
           articleUrl: item.link,
           sourceName: item.source || "Reuters",
           publishedAt: item.pubDate || new Date().toISOString(),
-          summary: summarizeLikeInShorts(bodyText),
+          summary,
           fullText,
           industry: industryFromText(bodyText),
           scope: "global",
@@ -235,13 +246,14 @@ serve(async (req: Request) => {
         const bodyText = `${item.title}. ${item.description || ""}`;
         if (!isBusinessNews(bodyText)) continue;
         const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
+        const summary = summarizeLikeInShorts(fullText || bodyText);
         if (!isBusinessNews(`${bodyText} ${fullText}`)) continue;
         allRows.push({
           title: stripHtml(item.title),
           articleUrl: item.link,
           sourceName: "Google News",
           publishedAt: item.pubDate || new Date().toISOString(),
-          summary: summarizeLikeInShorts(bodyText),
+          summary,
           fullText,
           industry: industryFromText(bodyText),
           scope: "local",
