@@ -31,6 +31,7 @@ const LIVEMINT_FEEDS = [
   "https://www.livemint.com/rss/money",
   "https://www.livemint.com/rss/industry",
 ];
+const MIN_NEWS_CARDS = 10;
 
 function normalizeLocation(input: unknown): string {
   return typeof input === "string" ? input.trim().toLowerCase() : "";
@@ -186,7 +187,8 @@ function isBusinessNews(text: string): boolean {
   if (!t) return false;
   if (NON_BUSINESS_EXCLUDE.test(t)) return false;
   if (RUSSIAN_EXCLUDE.test(t)) return false;
-  return BUSINESS_INCLUDE.test(t);
+  // LiveMint-only feeds are already business-focused; avoid over-pruning.
+  return true;
 }
 
 function industryFromText(text: string): string {
@@ -461,9 +463,24 @@ serve(async (req: Request) => {
         if ((x.city || "") !== (row.city || "")) return false;
         if ((x.country || "") !== (row.country || "")) return false;
         const xHeadline = normalizedHeadlineKey(x.title || "");
-        return headlineSimilarity(xHeadline, rowHeadline) >= 0.82;
+        return headlineSimilarity(xHeadline, rowHeadline) >= 0.72;
       });
       if (!duplicate) dedupedPayload.push(row);
+    }
+    const fallbackPool = byUrl.filter((row) => {
+      const rowHeadline = normalizedHeadlineKey(row.title || "");
+      const duplicate = dedupedPayload.find((x) => {
+        if (x.scope !== row.scope) return false;
+        if ((x.city || "") !== (row.city || "")) return false;
+        if ((x.country || "") !== (row.country || "")) return false;
+        const xHeadline = normalizedHeadlineKey(x.title || "");
+        return headlineSimilarity(xHeadline, rowHeadline) >= 0.72;
+      });
+      return !duplicate;
+    });
+    for (const extra of fallbackPool) {
+      if (dedupedPayload.length >= MIN_NEWS_CARDS) break;
+      dedupedPayload.push(extra);
     }
     const globalRows = dedupedPayload.filter((p) => p.scope === "global");
     const localRows = dedupedPayload.filter((p) => p.scope === "local");

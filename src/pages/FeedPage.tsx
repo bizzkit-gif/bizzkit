@@ -84,11 +84,6 @@ function isBusinessNewsCard(n: NewsCard): boolean {
   if (!summary) return true
   const repeatedHeadline = summary.split(title).length - 1 >= 4
   if (repeatedHeadline) return false
-  const leadershipHeadline = /\b(names?|appoints?|appointed|ceo|cfo|chairman|md|managing director)\b/.test(title)
-  if (leadershipHeadline) {
-    const detailSignals = /\b(effective|replac|succeed|former|previously|strategy|growth|expansion|market|revenue|profit|quarter|fiscal|operations|portfolio|business unit|reported|guidance)\b/
-    if (!detailSignals.test(summary)) return false
-  }
   return true
 }
 
