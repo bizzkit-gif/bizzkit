@@ -135,6 +135,11 @@ function isLowQualityStory(headline: string, summary: string, fullText: string):
   if (repeatedHeadline) return true;
   if (hsOverlap > 0.92 && !hasNovelInfo) return true;
   if (f && sfOverlap < 0.12 && s.length < 220) return true;
+  const leadershipHeadline = /\b(names?|appoints?|appointed|ceo|cfo|chairman|md|managing director)\b/i.test(h);
+  if (leadershipHeadline) {
+    const detailSignals = /\b(effective|replac|succeed|former|previously|strategy|growth|expansion|market|revenue|profit|quarter|fiscal|operations|portfolio|business unit|reported|guidance)\b/i;
+    if (!detailSignals.test(s) || sTokens.size < hTokens.size + 5) return true;
+  }
   return false;
 }
 

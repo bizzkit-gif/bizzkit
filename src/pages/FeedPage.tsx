@@ -78,16 +78,15 @@ function isBusinessNewsCard(n: NewsCard): boolean {
   if (bad.test(text)) return false
   const title = stripNewsSourceNoise(n.title).toLowerCase()
   const summary = stripNewsSourceNoise(n.summary).toLowerCase()
-  if (!title || !summary) return false
-  if (summary.length < 70) return false
-  const repeatedHeadline = summary.split(title).length - 1 >= 3
+  if (!title) return false
+  if (!summary) return true
+  const repeatedHeadline = summary.split(title).length - 1 >= 4
   if (repeatedHeadline) return false
-  const titleWords = new Set(title.split(/[^a-z0-9]+/g).filter((w) => w.length >= 4))
-  const summaryWords = new Set(summary.split(/[^a-z0-9]+/g).filter((w) => w.length >= 4))
-  let overlap = 0
-  titleWords.forEach((w) => { if (summaryWords.has(w)) overlap += 1 })
-  const overlapRatio = titleWords.size ? overlap / titleWords.size : 0
-  if (overlapRatio > 0.96 && summaryWords.size <= titleWords.size + 2) return false
+  const leadershipHeadline = /\b(names?|appoints?|appointed|ceo|cfo|chairman|md|managing director)\b/.test(title)
+  if (leadershipHeadline) {
+    const detailSignals = /\b(effective|replac|succeed|former|previously|strategy|growth|expansion|market|revenue|profit|quarter|fiscal|operations|portfolio|business unit|reported|guidance)\b/
+    if (!detailSignals.test(summary)) return false
+  }
   return true
 }
 
@@ -496,9 +495,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     const mixed = [...postItems, ...newsItems].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     )
-    if (suggestedConnections.length && !search.trim()) {
+    if (!search.trim()) {
       const suggestedItem: FeedMixedItem = {
-        id: `suggested:${suggestedConnections.map((b) => b.id).join(',')}`,
+        id: `suggested:${suggestedConnections.map((b) => b.id).join(',') || 'empty'}`,
         type: 'suggested',
         createdAt: new Date(Date.now() - 1).toISOString(),
         businessIds: suggestedConnections.map((b) => b.id),
@@ -751,34 +750,39 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                       const suggestedBiz = item.businessIds
                         .map((id) => bizById.get(normalizeUuid(id)))
                         .filter((b): b is Business => !!b)
-                      if (!suggestedBiz.length) return null
                       return (
                         <div key={item.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.1)', marginBottom:10 }}>
                           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:10 }}>
                             <h4 style={{ margin:0, fontSize:13.5, fontFamily:'Syne, sans-serif' }}>Suggested Connections</h4>
                             <span style={{ fontSize:10, color:'#7A92B0' }}>Based on your feed</span>
                           </div>
-                          <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                            {suggestedBiz.map((b) => {
-                              const isConn = conns.has(normalizeUuid(b.id))
-                              const logoSrc = normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)
-                              const bizName = cleanDisplayText(b.name) || 'Business'
-                              return (
-                                <div key={b.id} style={{ display:'flex', alignItems:'center', gap:8, background:'#0F1D31', borderRadius:10, padding:8, border:'1px solid rgba(255,255,255,0.06)' }}>
-                                  <div className={grad(b.id)} onClick={() => onView(b.id)} style={{ width:34, height:34, borderRadius:9, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:11, color:'#fff', flexShrink:0, cursor:'pointer', overflow:'hidden' }}>
-                                    {logoSrc ? <img src={logoSrc} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' as const }} /> : logoInitials(bizName)}
+                          {suggestedBiz.length > 0 ? (
+                            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                              {suggestedBiz.map((b) => {
+                                const isConn = conns.has(normalizeUuid(b.id))
+                                const logoSrc = normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)
+                                const bizName = cleanDisplayText(b.name) || 'Business'
+                                return (
+                                  <div key={b.id} style={{ display:'flex', alignItems:'center', gap:8, background:'#0F1D31', borderRadius:10, padding:8, border:'1px solid rgba(255,255,255,0.06)' }}>
+                                    <div className={grad(b.id)} onClick={() => onView(b.id)} style={{ width:34, height:34, borderRadius:9, display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:11, color:'#fff', flexShrink:0, cursor:'pointer', overflow:'hidden' }}>
+                                      {logoSrc ? <img src={logoSrc} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' as const }} /> : logoInitials(bizName)}
+                                    </div>
+                                    <div style={{ flex:1, minWidth:0, cursor:'pointer' }} onClick={() => onView(b.id)}>
+                                      <div style={{ fontSize:12.5, fontWeight:700 }}>{bizName}</div>
+                                      <div style={{ fontSize:10, color:'#7A92B0' }}>{cleanDisplayText(b.industry)} · {cleanDisplayText(b.city)}</div>
+                                    </div>
+                                    <button onClick={() => doConnect(b)} className={`btn btn-sm ${isConn?'btn-ghost':'btn-blue'}`} style={{ flexShrink:0 }}>
+                                      {isConn ? 'Disconnect' : 'Connect'}
+                                    </button>
                                   </div>
-                                  <div style={{ flex:1, minWidth:0, cursor:'pointer' }} onClick={() => onView(b.id)}>
-                                    <div style={{ fontSize:12.5, fontWeight:700 }}>{bizName}</div>
-                                    <div style={{ fontSize:10, color:'#7A92B0' }}>{cleanDisplayText(b.industry)} · {cleanDisplayText(b.city)}</div>
-                                  </div>
-                                  <button onClick={() => doConnect(b)} className={`btn btn-sm ${isConn?'btn-ghost':'btn-blue'}`} style={{ flexShrink:0 }}>
-                                    {isConn ? 'Disconnect' : 'Connect'}
-                                  </button>
-                                </div>
-                              )
-                            })}
-                          </div>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <div style={{ background:'#0F1D31', borderRadius:10, padding:'10px 11px', border:'1px solid rgba(255,255,255,0.06)', fontSize:12, color:'#9FB2C8' }}>
+                              No new suggestions right now. Explore more businesses to discover new connections.
+                            </div>
+                          )}
                         </div>
                       )
                     }
