@@ -73,6 +73,8 @@ function matchesSearchText(haystack: string, rawQuery: string): boolean {
 }
 
 function isBusinessNewsCard(n: NewsCard): boolean {
+  const liveMintOnly = /livemint\.com/i.test(n.article_url || '') || /livemint/i.test(n.source_name || '')
+  if (!liveMintOnly) return false
   const text = `${n.title} ${n.summary} ${n.full_text || ''}`.toLowerCase()
   const bad = /(weather|storm|rainfall|snow|hurricane|cyclone|thunderstorm|heatwave|temperature|forecast|climate alert|air quality|pollen|wildfire|earthquake|flood warning|russia|russian|moscow|kremlin|putin|россия|русск|москва|кремл|путин|[\u0400-\u04FF])/
   if (bad.test(text)) return false
