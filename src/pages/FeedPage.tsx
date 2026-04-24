@@ -78,6 +78,60 @@ function isBusinessNewsCard(n: NewsCard): boolean {
   return !bad.test(text)
 }
 
+function stripNewsSourceNoise(text: string): string {
+  return (text || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/https?:\/\/\S+/gi, ' ')
+    .replace(/\b(?:www\.)?[a-z0-9-]+\.(?:com|in|net|org|co|io|biz|info|news|tv|uk|me|ai)(?:\/\S*)?\b/gi, ' ')
+    .replace(/\s[-|:]\s*[A-Za-z0-9 .,&'-]{2,40}$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function headlineLike(line: string, headline: string): boolean {
+  const l = stripNewsSourceNoise(line).toLowerCase()
+  const h = stripNewsSourceNoise(headline).toLowerCase()
+  if (!l || !h) return false
+  if (l === h) return true
+  if (l.includes(h) || h.includes(l)) return true
+  const titleTokens = h.split(/\s+/).filter((w) => w.length > 3)
+  if (!titleTokens.length) return false
+  const overlap = titleTokens.filter((t) => l.includes(t)).length / titleTokens.length
+  return overlap >= 0.75
+}
+
+function buildDisplaySummary(n: NewsCard): string {
+  const headline = stripNewsSourceNoise(n.title)
+  const cleanedSummary = stripNewsSourceNoise(n.summary)
+  const cleanedFull = stripNewsSourceNoise(n.full_text || '')
+  const summaryLooksBad =
+    !cleanedSummary ||
+    cleanedSummary.length < 120 ||
+    headlineLike(cleanedSummary, headline)
+
+  if (!summaryLooksBad) return cleanedSummary.slice(0, 1800)
+
+  const base = cleanedFull || cleanedSummary || headline
+  const sentences = base
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 40 && s.length <= 300)
+    .filter((s) => !/(subscribe|newsletter|all rights reserved|copyright|read more|watch live)/i.test(s))
+    .filter((s) => !headlineLike(s, headline))
+
+  const selected: string[] = []
+  let len = 0
+  for (const s of sentences) {
+    const nextLen = len + s.length + (selected.length ? 1 : 0)
+    if (nextLen > 1800) break // roughly max 25 lines in modal
+    selected.push(s)
+    len = nextLen
+    if (selected.length >= 12) break
+  }
+
+  return (selected.join(' ') || base).trim().slice(0, 1800)
+}
+
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
@@ -413,6 +467,10 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     () => newsCards.find((n) => n.id === openNewsletterNewsId) || null,
     [newsCards, openNewsletterNewsId],
   )
+  const openNewsletterSummary = useMemo(
+    () => (openNewsletterNews ? buildDisplaySummary(openNewsletterNews) : ''),
+    [openNewsletterNews],
+  )
   const onLikeFeedPost = async (postId: string) => {
     if (!myBiz) {
       toast('Create a business profile first', 'info')
@@ -641,6 +699,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                     }
 
                     const n = item.news
+                    const cardSummary = buildDisplaySummary(n)
                     return (
                       <div key={item.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(85,170,255,0.35)', marginBottom:10 }}>
                         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
@@ -650,8 +709,8 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                           </div>
                           <div style={{ fontSize:10, color:'#7A92B0' }}>{fmtDate(n.published_at)}</div>
                         </div>
-                        <h4 style={{ margin:'0 0 6px', fontSize:14, lineHeight:1.35 }}>{n.title}</h4>
-                        <p style={{ margin:'0 0 10px', fontSize:12.5, color:'#C9D6E5', lineHeight:1.55 }}>{n.summary}</p>
+                        <h4 style={{ margin:'0 0 6px', fontSize:14, lineHeight:1.35 }}>{stripNewsSourceNoise(n.title)}</h4>
+                        <p style={{ margin:'0 0 10px', fontSize:12.5, color:'#C9D6E5', lineHeight:1.55 }}>{cardSummary.slice(0, 220)}{cardSummary.length > 220 ? '…' : ''}</p>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8 }}>
                           <span style={{ fontSize:10, color:'#7A92B0' }}>Industry: {n.industry}</span>
                           <button
@@ -819,7 +878,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
               <div>
                 <div style={{ fontSize:10.5, color:'#7A92B0', fontWeight:700 }}>Full News</div>
-                <h3 style={{ margin:'4px 0 0', fontSize:15, lineHeight:1.35, fontFamily:'Syne, sans-serif' }}>{openNewsletterNews.title}</h3>
+                <h3 style={{ margin:'4px 0 0', fontSize:15, lineHeight:1.35, fontFamily:'Syne, sans-serif' }}>{stripNewsSourceNoise(openNewsletterNews.title)}</h3>
               </div>
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => setOpenNewsletterNewsId(null)}>Close</button>
             </div>
@@ -830,7 +889,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
             <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, padding:10, marginBottom:10 }}>
               <p style={{ margin:0, fontSize:13, lineHeight:1.7, whiteSpace:'pre-line' }}>
-                {(openNewsletterNews.summary || '').trim()}
+                {openNewsletterSummary}
               </p>
             </div>
           </div>

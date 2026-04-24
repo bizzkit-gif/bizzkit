@@ -35,11 +35,69 @@ function decodeHtml(raw: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
 }
 
 function stripHtml(raw: string): string {
   return decodeHtml(raw).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function stripUrlsAndDomains(text: string): string {
+  return text
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/\b(?:www\.)?[a-z0-9-]+\.(?:com|in|net|org|co|io|biz|info|news|tv|uk|me|ai)(?:\/\S*)?\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripSourceTail(text: string): string {
+  return text
+    .replace(/\s[-|:]\s*[A-Za-z0-9 .,&'-]{2,40}$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isHeadlineLike(line: string, headline: string): boolean {
+  const l = stripUrlsAndDomains(line).toLowerCase();
+  const h = stripUrlsAndDomains(headline).toLowerCase();
+  if (!l || !h) return false;
+  if (l === h) return true;
+  if (l.includes(h) || h.includes(l)) return true;
+  const titleTokens = h.split(/\s+/).filter((w) => w.length > 3);
+  if (!titleTokens.length) return false;
+  const overlap = titleTokens.filter((t) => l.includes(t)).length / titleTokens.length;
+  return overlap >= 0.75;
+}
+
+function buildSummary(headline: string, fullText: string, fallbackText: string): string {
+  const cleanHeadline = stripSourceTail(stripUrlsAndDomains(stripHtml(headline)));
+  const base = stripUrlsAndDomains(stripHtml(fullText || fallbackText || ""));
+  if (!base) return cleanHeadline;
+
+  const sentences = base
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 40 && s.length <= 300)
+    .filter((s) => !/(subscribe|newsletter|all rights reserved|copyright|read more|watch live)/i.test(s))
+    .filter((s) => !isHeadlineLike(s, cleanHeadline));
+
+  const chosen: string[] = [];
+  let charCount = 0;
+  for (const s of sentences) {
+    const nextLen = charCount + s.length + (chosen.length ? 1 : 0);
+    if (nextLen > 1800) break; // ~ up to 25 lines in mobile modal.
+    chosen.push(s);
+    charCount = nextLen;
+    if (chosen.length >= 12) break;
+  }
+
+  const joined = chosen.join(" ").trim();
+  if (!joined) {
+    const fallback = base.slice(0, 1800).trim();
+    return fallback || cleanHeadline;
+  }
+  return joined;
 }
 
 function normalizeArticleText(raw: string): string {
@@ -79,26 +137,6 @@ function isBusinessNews(text: string): boolean {
   if (NON_BUSINESS_EXCLUDE.test(t)) return false;
   if (RUSSIAN_EXCLUDE.test(t)) return false;
   return BUSINESS_INCLUDE.test(t);
-}
-
-function summarizeLikeInShorts(text: string): string {
-  const cleaned = stripHtml(text);
-  if (!cleaned) return "";
-  const normalized = cleaned
-    .replace(/\s+-\s+[A-Za-z][A-Za-z .,&-]{2,30}\s*$/g, "")
-    .replace(/\b(?:read more|click here|watch live)\b/gi, "")
-    .trim();
-  const sentences = normalized
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length >= 45 && s.length <= 260);
-  const ranked = sentences
-    .filter((s) => !/(copyright|all rights reserved|subscribe|newsletter)/i.test(s))
-    .slice(0, 8);
-  const chosen = ranked.slice(0, 2).join(" ");
-  const clipped = (chosen || ranked[0] || normalized).trim();
-  if (clipped.length <= 185) return clipped;
-  return `${clipped.slice(0, 182).trimEnd()}...`;
 }
 
 function industryFromText(text: string): string {
@@ -186,10 +224,10 @@ serve(async (req: Request) => {
         const bodyText = `${item.title}. ${item.description || ""}`;
         if (!isBusinessNews(bodyText)) continue;
         const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
-        const summary = summarizeLikeInShorts(fullText || bodyText);
+        const summary = buildSummary(item.title || "", fullText, bodyText);
         if (!isBusinessNews(`${bodyText} ${fullText}`)) continue;
         allRows.push({
-          title: stripHtml(item.title),
+          title: stripSourceTail(stripUrlsAndDomains(stripHtml(item.title))),
           articleUrl: item.link,
           sourceName: item.source || "Reuters",
           publishedAt: item.pubDate || new Date().toISOString(),
@@ -246,10 +284,10 @@ serve(async (req: Request) => {
         const bodyText = `${item.title}. ${item.description || ""}`;
         if (!isBusinessNews(bodyText)) continue;
         const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
-        const summary = summarizeLikeInShorts(fullText || bodyText);
+        const summary = buildSummary(item.title || "", fullText, bodyText);
         if (!isBusinessNews(`${bodyText} ${fullText}`)) continue;
         allRows.push({
-          title: stripHtml(item.title),
+          title: stripSourceTail(stripUrlsAndDomains(stripHtml(item.title))),
           articleUrl: item.link,
           sourceName: "Google News",
           publishedAt: item.pubDate || new Date().toISOString(),
