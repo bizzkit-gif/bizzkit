@@ -75,7 +75,20 @@ function matchesSearchText(haystack: string, rawQuery: string): boolean {
 function isBusinessNewsCard(n: NewsCard): boolean {
   const text = `${n.title} ${n.summary} ${n.full_text || ''}`.toLowerCase()
   const bad = /(weather|storm|rainfall|snow|hurricane|cyclone|thunderstorm|heatwave|temperature|forecast|climate alert|air quality|pollen|wildfire|earthquake|flood warning|russia|russian|moscow|kremlin|putin|россия|русск|москва|кремл|путин|[\u0400-\u04FF])/
-  return !bad.test(text)
+  if (bad.test(text)) return false
+  const title = stripNewsSourceNoise(n.title).toLowerCase()
+  const summary = stripNewsSourceNoise(n.summary).toLowerCase()
+  if (!title || !summary) return false
+  if (summary.length < 70) return false
+  const repeatedHeadline = summary.split(title).length - 1 >= 3
+  if (repeatedHeadline) return false
+  const titleWords = new Set(title.split(/[^a-z0-9]+/g).filter((w) => w.length >= 4))
+  const summaryWords = new Set(summary.split(/[^a-z0-9]+/g).filter((w) => w.length >= 4))
+  let overlap = 0
+  titleWords.forEach((w) => { if (summaryWords.has(w)) overlap += 1 })
+  const overlapRatio = titleWords.size ? overlap / titleWords.size : 0
+  if (overlapRatio > 0.96 && summaryWords.size <= titleWords.size + 2) return false
+  return true
 }
 
 function stripNewsSourceNoise(text: string): string {
@@ -132,6 +145,36 @@ function buildDisplaySummary(n: NewsCard): string {
   return (selected.join(' ') || base).trim().slice(0, 1800)
 }
 
+function splitSentences(text: string): string[] {
+  return (text || '')
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function buildInShortsWriteup(n: NewsCard, maxChars: number): string {
+  const headline = stripNewsSourceNoise(n.title)
+  const base = buildDisplaySummary(n)
+  const sentences = splitSentences(base)
+    .filter((s) => s.length >= 30)
+    .filter((s) => !headlineLike(s, headline))
+    .filter((s) => !/(subscribe|newsletter|all rights reserved|copyright|read more|click here|watch live)/i.test(s))
+
+  const selected: string[] = []
+  let total = 0
+  for (const s of sentences) {
+    const next = total + s.length + (selected.length ? 1 : 0)
+    if (next > maxChars) break
+    selected.push(s)
+    total = next
+    if (selected.length >= 8) break
+  }
+
+  const text = (selected.join(' ') || base || '').trim()
+  if (!text) return ''
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
@@ -150,6 +193,8 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   }>>([])
   const [newsCards, setNewsCards] = useState<NewsCard[]>([])
   const [openNewsletterNewsId, setOpenNewsletterNewsId] = useState<string | null>(null)
+  const [readMoreSummary, setReadMoreSummary] = useState<string>('')
+  const [readMoreLoading, setReadMoreLoading] = useState(false)
   const [likesByPostId, setLikesByPostId] = useState<Record<string, number>>({})
   const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set())
   const [likingPostIds, setLikingPostIds] = useState<Set<string>>(new Set())
@@ -467,10 +512,50 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     () => newsCards.find((n) => n.id === openNewsletterNewsId) || null,
     [newsCards, openNewsletterNewsId],
   )
-  const openNewsletterSummary = useMemo(
-    () => (openNewsletterNews ? buildDisplaySummary(openNewsletterNews) : ''),
-    [openNewsletterNews],
-  )
+  const openNewsletterSummary = useMemo(() => {
+    if (!openNewsletterNews) return ''
+    if (readMoreSummary.trim()) {
+      return buildInShortsWriteup({ ...openNewsletterNews, summary: readMoreSummary }, 2200)
+    }
+    return buildInShortsWriteup(openNewsletterNews, 2200)
+  }, [openNewsletterNews, readMoreSummary])
+
+  const onReadMoreNews = async (n: NewsCard) => {
+    setOpenNewsletterNewsId(n.id)
+    setReadMoreSummary('')
+    setReadMoreLoading(true)
+    try {
+      const { data: sessData } = await sb.auth.getSession()
+      const token = sessData.session?.access_token || ''
+      if (!token) {
+        setReadMoreSummary(buildDisplaySummary(n))
+        return
+      }
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/news-read-more-summary`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: SUPABASE_ANON_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          headline: n.title,
+          articleUrl: n.article_url,
+          fallbackText: n.full_text || n.summary,
+        }),
+      })
+      if (!res.ok) {
+        setReadMoreSummary(buildDisplaySummary(n))
+        return
+      }
+      const body = (await res.json().catch(() => ({}))) as { summary?: string }
+      setReadMoreSummary((body.summary || '').trim() || buildDisplaySummary(n))
+    } catch {
+      setReadMoreSummary(buildDisplaySummary(n))
+    } finally {
+      setReadMoreLoading(false)
+    }
+  }
   const onLikeFeedPost = async (postId: string) => {
     if (!myBiz) {
       toast('Create a business profile first', 'info')
@@ -699,7 +784,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                     }
 
                     const n = item.news
-                    const cardSummary = buildDisplaySummary(n)
+                    const cardSummary = buildInShortsWriteup(n, 420)
                     return (
                       <div key={item.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(85,170,255,0.35)', marginBottom:10 }}>
                         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
@@ -710,12 +795,12 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                           <div style={{ fontSize:10, color:'#7A92B0' }}>{fmtDate(n.published_at)}</div>
                         </div>
                         <h4 style={{ margin:'0 0 6px', fontSize:14, lineHeight:1.35 }}>{stripNewsSourceNoise(n.title)}</h4>
-                        <p style={{ margin:'0 0 10px', fontSize:12.5, color:'#C9D6E5', lineHeight:1.55 }}>{cardSummary.slice(0, 220)}{cardSummary.length > 220 ? '…' : ''}</p>
+                        <p style={{ margin:'0 0 10px', fontSize:12.8, color:'#C9D6E5', lineHeight:1.6 }}>{cardSummary}</p>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8 }}>
                           <span style={{ fontSize:10, color:'#7A92B0' }}>Industry: {n.industry}</span>
                           <button
                             type="button"
-                            onClick={() => setOpenNewsletterNewsId(n.id)}
+                            onClick={() => { void onReadMoreNews(n) }}
                             className="btn btn-sm btn-ghost"
                           >
                             Read more
@@ -878,7 +963,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:8 }}>
               <div>
                 <div style={{ fontSize:10.5, color:'#7A92B0', fontWeight:700 }}>Full News</div>
-                <h3 style={{ margin:'4px 0 0', fontSize:15, lineHeight:1.35, fontFamily:'Syne, sans-serif' }}>{stripNewsSourceNoise(openNewsletterNews.title)}</h3>
+                <h3 style={{ margin:'4px 0 0', fontSize:16, lineHeight:1.35, fontFamily:'Syne, sans-serif' }}>{stripNewsSourceNoise(openNewsletterNews.title)}</h3>
               </div>
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => setOpenNewsletterNewsId(null)}>Close</button>
             </div>
@@ -888,9 +973,13 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
             </div>
 
             <div style={{ background:'#152236', border:'1px solid rgba(255,255,255,0.07)', borderRadius:12, padding:10, marginBottom:10 }}>
-              <p style={{ margin:0, fontSize:13, lineHeight:1.7, whiteSpace:'pre-line' }}>
-                {openNewsletterSummary}
-              </p>
+              {readMoreLoading ? (
+                <div style={{ display:'flex', justifyContent:'center', padding:'16px 0' }}><div className="spinner" /></div>
+              ) : (
+                <p style={{ margin:0, fontSize:13.2, lineHeight:1.72, whiteSpace:'pre-line' }}>
+                  {openNewsletterSummary}
+                </p>
+              )}
             </div>
           </div>
         </div>

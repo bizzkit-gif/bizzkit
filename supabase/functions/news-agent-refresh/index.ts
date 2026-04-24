@@ -101,6 +101,43 @@ function buildSummary(headline: string, fullText: string, fallbackText: string):
   return joined;
 }
 
+function tokenSet(text: string): Set<string> {
+  return new Set(
+    stripUrlsAndDomains(stripHtml(text))
+      .toLowerCase()
+      .split(/[^a-z0-9]+/g)
+      .filter((w) => w.length >= 4),
+  );
+}
+
+function overlapRatio(a: Set<string>, b: Set<string>): number {
+  if (!a.size || !b.size) return 0;
+  let inter = 0;
+  for (const x of a) {
+    if (b.has(x)) inter += 1;
+  }
+  return inter / Math.max(1, Math.min(a.size, b.size));
+}
+
+function isLowQualityStory(headline: string, summary: string, fullText: string): boolean {
+  const h = stripSourceTail(stripUrlsAndDomains(stripHtml(headline)));
+  const s = stripUrlsAndDomains(stripHtml(summary));
+  const f = stripUrlsAndDomains(stripHtml(fullText));
+  if (!h || !s) return true;
+  if (s.length < 80) return true;
+  const hTokens = tokenSet(h);
+  const sTokens = tokenSet(s);
+  const fTokens = tokenSet(f);
+  const hsOverlap = overlapRatio(hTokens, sTokens);
+  const sfOverlap = overlapRatio(sTokens, fTokens);
+  const repeatedHeadline = s.toLowerCase().split(h.toLowerCase()).length - 1 >= 3;
+  const hasNovelInfo = sTokens.size >= Math.max(10, hTokens.size + 4);
+  if (repeatedHeadline) return true;
+  if (hsOverlap > 0.92 && !hasNovelInfo) return true;
+  if (f && sfOverlap < 0.12 && s.length < 220) return true;
+  return false;
+}
+
 function normalizeArticleText(raw: string): string {
   return stripHtml(raw).replace(/\s+/g, " ").trim();
 }
@@ -263,13 +300,30 @@ serve(async (req: Request) => {
 
     if (shouldRefreshGlobal) {
       const globalRss = await fetchRss("https://news.google.com/rss/search?q=global%20business%20news&hl=en-US&gl=US&ceid=US:en");
+      const fallbackGlobal: ParsedNews[] = [];
       for (const item of globalRss.slice(0, 12)) {
         if (!item.title || !item.link) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
+        const cleanedTitle = stripSourceTail(stripUrlsAndDomains(stripHtml(item.title)));
+        const fallbackSummary = buildSummary(cleanedTitle, stripHtml(bodyText), bodyText);
+        fallbackGlobal.push({
+          title: cleanedTitle,
+          articleUrl: item.link,
+          sourceName: item.source || "Reuters",
+          publishedAt: item.pubDate || new Date().toISOString(),
+          summary: fallbackSummary,
+          fullText: stripHtml(bodyText),
+          imageUrl: null,
+          industry: industryFromText(bodyText),
+          scope: "global",
+          city: null,
+          country: null,
+        });
         if (!isBusinessNews(bodyText)) continue;
         const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
         const summary = buildSummary(item.title || "", fullText, bodyText);
         if (!isBusinessNews(`${bodyText} ${fullText}`)) continue;
+        if (isLowQualityStory(item.title || "", summary, fullText)) continue;
         allRows.push({
           title: stripSourceTail(stripUrlsAndDomains(stripHtml(item.title))),
           articleUrl: item.link,
@@ -284,18 +338,38 @@ serve(async (req: Request) => {
           country: null,
         });
       }
+      if (!allRows.length && fallbackGlobal.length) {
+        allRows.push(...fallbackGlobal.slice(0, 6));
+      }
     }
 
     if (shouldRefreshLocal) {
       const query = encodeURIComponent(`${city} ${country} business`);
       const localRss = await fetchRss(`https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`);
+      const fallbackLocal: ParsedNews[] = [];
       for (const item of localRss.slice(0, 10)) {
         if (!item.title || !item.link) continue;
         const bodyText = `${item.title}. ${item.description || ""}`;
+        const cleanedTitle = stripSourceTail(stripUrlsAndDomains(stripHtml(item.title)));
+        const fallbackSummary = buildSummary(cleanedTitle, stripHtml(bodyText), bodyText);
+        fallbackLocal.push({
+          title: cleanedTitle,
+          articleUrl: item.link,
+          sourceName: "Google News",
+          publishedAt: item.pubDate || new Date().toISOString(),
+          summary: fallbackSummary,
+          fullText: stripHtml(bodyText),
+          imageUrl: null,
+          industry: industryFromText(bodyText),
+          scope: "local",
+          city,
+          country,
+        });
         if (!isBusinessNews(bodyText)) continue;
         const fullText = await fetchArticleReadableText(item.link, stripHtml(bodyText));
         const summary = buildSummary(item.title || "", fullText, bodyText);
         if (!isBusinessNews(`${bodyText} ${fullText}`)) continue;
+        if (isLowQualityStory(item.title || "", summary, fullText)) continue;
         allRows.push({
           title: stripSourceTail(stripUrlsAndDomains(stripHtml(item.title))),
           articleUrl: item.link,
@@ -309,6 +383,9 @@ serve(async (req: Request) => {
           city,
           country,
         });
+      }
+      if (!allRows.length && fallbackLocal.length) {
+        allRows.push(...fallbackLocal.slice(0, 6));
       }
     }
 
