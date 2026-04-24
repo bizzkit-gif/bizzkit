@@ -205,6 +205,24 @@ function hashKey(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function normalizedHeadlineKey(title: string): string {
+  return stripSourceTail(stripUrlsAndDomains(stripHtml(title)))
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(the|a|an|to|for|of|in|on|at|with|from|by|and)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function headlineSimilarity(a: string, b: string): number {
+  const aa = new Set(a.split(/\s+/).filter((w) => w.length >= 3));
+  const bb = new Set(b.split(/\s+/).filter((w) => w.length >= 3));
+  if (!aa.size || !bb.size) return 0;
+  let inter = 0;
+  for (const w of aa) if (bb.has(w)) inter += 1;
+  return inter / Math.max(aa.size, bb.size);
+}
+
 function extractTagValue(item: string, tag: string): string {
   const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i");
   return decodeHtml(item.match(re)?.[1] || "").trim();
@@ -434,7 +452,19 @@ serve(async (req: Request) => {
       published_at: new Date(n.publishedAt).toISOString(),
       dedupe_hash: hashKey(`${n.scope}|${n.city || ""}|${n.country || ""}|${n.articleUrl}`),
     }));
-    const dedupedPayload = Array.from(new Map(payload.map((p) => [p.dedupe_hash, p])).values());
+    const byUrl = Array.from(new Map(payload.map((p) => [p.dedupe_hash, p])).values());
+    const dedupedPayload: typeof byUrl = [];
+    for (const row of byUrl) {
+      const rowHeadline = normalizedHeadlineKey(row.title || "");
+      const duplicate = dedupedPayload.find((x) => {
+        if (x.scope !== row.scope) return false;
+        if ((x.city || "") !== (row.city || "")) return false;
+        if ((x.country || "") !== (row.country || "")) return false;
+        const xHeadline = normalizedHeadlineKey(x.title || "");
+        return headlineSimilarity(xHeadline, rowHeadline) >= 0.82;
+      });
+      if (!duplicate) dedupedPayload.push(row);
+    }
     const globalRows = dedupedPayload.filter((p) => p.scope === "global");
     const localRows = dedupedPayload.filter((p) => p.scope === "local");
 
