@@ -78,7 +78,7 @@ const runDeleteAccount = async () => {
   setDeleteAccountBusy(true)
   const res = await deleteMyAccount(DELETE_ACCOUNT_CONFIRM)
   setDeleteAccountBusy(false)
-  if (!res.ok) {
+  if (res.ok === false) {
     toast(res.error, 'error')
     return
   }
@@ -174,7 +174,7 @@ const doConnect = async () => {
 if (!myBiz || !biz) { toast('Create a profile first', 'info'); return }
 if (isConn) {
   const r = await deleteConnectionBetween(myBiz.id, biz.id)
-  if (!r.ok) { toast('Failed to disconnect: ' + r.error, 'error'); return }
+  if (r.ok === false) { toast('Failed to disconnect: ' + r.error, 'error'); return }
   setIsConn(false)
   setConnections((prev) => prev.filter((c) => normalizeUuid(c.id) !== normalizeUuid(myBiz.id)))
   toast('Disconnected from ' + biz.name)

@@ -629,7 +629,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     if (!myBiz) { toast('Create a business profile first', 'info'); return }
     if (conns.has(normalizeUuid(b.id))) {
       const r = await deleteConnectionBetween(myBiz.id, b.id)
-      if (!r.ok) { toast('Failed to disconnect: ' + r.error, 'error'); return }
+      if (r.ok === false) { toast('Failed to disconnect: ' + r.error, 'error'); return }
       setConns((s) => {
         const next = new Set(s)
         next.delete(normalizeUuid(b.id))

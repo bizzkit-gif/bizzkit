@@ -401,14 +401,16 @@ export async function fetchBusinessProfilesByIds(select: string, ids: string[]):
     if (dErr) {
       console.warn('fetchBusinessProfilesByIds direct batch:', dErr.message)
     } else if (directRows) {
-      for (const row of directRows as Business[]) {
+      for (const row of directRows as unknown as Business[]) {
         if (row?.id) byId.set(normalizeUuid(row.id), row)
       }
     }
     const stillMissing2 = stillMissing.filter((id) => !byId.has(id))
     for (const id of stillMissing2) {
       const { data: one } = await sb.from('businesses').select(select).eq('id', id).maybeSingle()
-      if (one?.id) byId.set(normalizeUuid(one.id), one as Business)
+      if (one == null) continue
+      const b = one as unknown as Business
+      if (b.id) byId.set(normalizeUuid(b.id), b)
     }
   }
 

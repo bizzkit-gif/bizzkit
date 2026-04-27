@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { sb, Chat, Msg, Business, grad, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds, fetchBusinessByIdRobust, otherChatParticipantId, normalizeUuid, CONFERENCE_SESSION_INVITE_MARKER } from '../lib/db'
+import { sb, Chat, Msg, Business, grad, fmtDate, fmtTime, timeAgo, displayChatMessageText, chatCallInviteMessageRinging, markLatestChatCallInviteAsMissed, fetchBusinessProfilesByIds, fetchBusinessByIdRobust, otherChatParticipantId, normalizeUuid, CONFERENCE_SESSION_INVITE_MARKER } from '../lib/db'
 import { PeerVideoCall } from '../components/PeerVideoCall'
 import { useBusinessOnlineMap } from '../lib/presence'
 import { sendPushNotification } from '../lib/push'
@@ -246,7 +246,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
 
   useEffect(() => {
     if (!openWith || !myBiz) return
-    void sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: openWith }).then(({ data }) => {
+    Promise.resolve(sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: openWith })).then(({ data }) => {
       if (skipNextRpcAutoOpen.current) {
         skipNextRpcAutoOpen.current = false
         onClearOpen?.()
@@ -372,7 +372,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
               onClick={() => {
                 void (async () => {
                   const r = await markLatestChatCallInviteAsMissed(myBiz.id, incomingCallPeer.id)
-                  if (!r.ok) {
+                  if (r.ok === false) {
                     toast(r.error, 'error')
                     return
                   }
@@ -702,7 +702,7 @@ function ChatView({
           onEnd={() => setVideoCallOpen(false)}
           onEndWithoutRemote={async () => {
             const r = await markLatestChatCallInviteAsMissed(myId, displayOther.id)
-            if (!r.ok) toast(r.error, 'error')
+            if (r.ok === false) toast(r.error, 'error')
           }}
           headerEmoji="📞"
           connectingHint={`Connecting… waiting for ${displayOther.name} to join.`}
@@ -736,7 +736,7 @@ function ChatView({
               onClick={() => {
                 void (async () => {
                   const r = await markLatestChatCallInviteAsMissed(myBiz.id, incomingCallPeer.id)
-                  if (!r.ok) {
+                  if (r.ok === false) {
                     toast(r.error, 'error')
                     return
                   }
