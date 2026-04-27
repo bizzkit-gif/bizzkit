@@ -72,30 +72,48 @@ type ParsedConferenceInvite = {
 
 function parseConferenceInviteMessage(text: string | null | undefined): ParsedConferenceInvite | null {
   const raw = typeof text === 'string' ? text.trim() : ''
-  if (raw.startsWith(`${CONFERENCE_SESSION_INVITE_MARKER}:`)) {
-    const body = raw.slice(CONFERENCE_SESSION_INVITE_MARKER.length + 1).trim()
-    const token = body.split(/\s+/, 1)[0] || ''
-    if (!token) return null
-    const [conferenceIdRaw, stateRaw] = token.split(':')
-    const conferenceId = (conferenceIdRaw || '').trim()
-    if (!conferenceId) return null
-    const state = stateRaw === 'accepted' || stateRaw === 'declined' ? stateRaw : 'pending'
-    return { conferenceId, state }
+  if (!raw) return null
+
+  const prefix = `${CONFERENCE_SESSION_INVITE_MARKER}:`
+  if (raw.startsWith(prefix)) {
+    const rest = raw.slice(prefix.length)
+    const firstToken = /^(\S+)/.exec(rest)?.[1] || ''
+    if (!firstToken) return null
+    // Standard UUID + optional :accepted | :declined (single token)
+    const uuidState = /^([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(?::(accepted|declined))?$/i.exec(firstToken)
+    if (uuidState) {
+      const conferenceId = uuidState[1]
+      const tag = uuidState[2]
+      const state: ConferenceInviteState =
+        tag === 'accepted' ? 'accepted' : tag === 'declined' ? 'declined' : 'pending'
+      return { conferenceId, state }
+    }
+    const lastColon = firstToken.lastIndexOf(':')
+    if (lastColon > 0) {
+      const maybeId = firstToken.slice(0, lastColon)
+      const maybeTag = firstToken.slice(lastColon + 1).toLowerCase()
+      if (maybeTag === 'accepted' || maybeTag === 'declined') {
+        return { conferenceId: maybeId, state: maybeTag }
+      }
+    }
+    return { conferenceId: firstToken, state: 'pending' }
   }
 
-  // Fallback parser for plain invite text (no marker prefix).
+  // Fallback: plain invite copy (no leading marker, or legacy messages)
   const lower = raw.toLowerCase()
-  if (!lower.includes('invited you to join "') || !lower.includes('" on ') || !lower.includes(' at ')) return null
   if (!lower.includes('accept or decline below')) return null
-  const inviteMatch = raw.match(/invited you to join "(.+?)" on (.+?) at (.+?)\./i)
-  if (!inviteMatch) return null
   if (lower.includes('you accepted this invite')) return { state: 'accepted' }
   if (lower.includes('you declined this invite')) return { state: 'declined' }
+  if (!lower.includes('invited you to join') || !lower.includes(' on ') || !lower.includes(' at ')) return null
+  const quoted =
+    raw.match(/invited you to join ["“](.+?)["”]\s+on\s+(.+?)\s+at\s+(.+?)(?:\.|$)/i) ||
+    raw.match(/invited you to join\s+(.+?)\s+on\s+(.+?)\s+at\s+(.+?)\.\s*Accept or Decline below/i)
+  if (!quoted) return null
   return {
     state: 'pending',
-    title: inviteMatch[1]?.trim(),
-    dateLabel: inviteMatch[2]?.trim(),
-    timeLabel: inviteMatch[3]?.trim(),
+    title: quoted[1]?.trim(),
+    dateLabel: quoted[2]?.trim(),
+    timeLabel: quoted[3]?.trim(),
   }
 }
 
@@ -782,79 +800,135 @@ function ChatView({
               const showPendingInviteActions = canRespondToInvite && sessionInvite?.state === 'pending'
               const showAcceptedState = canRespondToInvite && sessionInvite?.state === 'accepted'
               const showDeclinedState = canRespondToInvite && sessionInvite?.state === 'declined'
+              const hasSessionActionRow = showPendingInviteActions || showAcceptedState || showDeclinedState
+
+              const inviteButtonStyle = { flex: 1, minHeight: 44, padding: '10px 12px', fontSize: 14, fontWeight: 700 } as const
+
+              const sessionActionRow = hasSessionActionRow ? (
+                <div
+                  style={{
+                    marginTop: 10,
+                    paddingLeft: mine ? 0 : 31,
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    display: 'flex',
+                    gap: 10,
+                  }}
+                >
+                  {showPendingInviteActions && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-green btn-sm"
+                        style={inviteButtonStyle}
+                        disabled={sessionInviteBusyId === m.id}
+                        onClick={() => {
+                          void handleSessionInviteAction(m, 'accept')
+                        }}
+                      >
+                        {sessionInviteBusyId === m.id ? 'Joining…' : 'Accept'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={inviteButtonStyle}
+                        disabled={sessionInviteBusyId === m.id}
+                        onClick={() => {
+                          void handleSessionInviteAction(m, 'decline')
+                        }}
+                      >
+                        Decline
+                      </button>
+                    </>
+                  )}
+                  {showAcceptedState && (
+                    <>
+                      <button type="button" className="btn btn-green btn-sm" style={{ ...inviteButtonStyle, opacity: 0.9, cursor: 'default' }} disabled>
+                        Accepted
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-sm" style={{ ...inviteButtonStyle, opacity: 0.6, cursor: 'default' }} disabled>
+                        Decline
+                      </button>
+                    </>
+                  )}
+                  {showDeclinedState && (
+                    <>
+                      <button type="button" className="btn btn-ghost btn-sm" style={{ ...inviteButtonStyle, opacity: 0.6, cursor: 'default' }} disabled>
+                        Accept
+                      </button>
+                      <button type="button" className="btn btn-red btn-sm" style={{ ...inviteButtonStyle, opacity: 0.9, cursor: 'default' }} disabled>
+                        Declined
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : null
+
+              const bubbleBlock = (
+                <>
+                  <div
+                    style={{
+                      padding: '8px 11px',
+                      borderRadius: mine ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+                      background: mine ? '#1E7EF7' : '#1A2D47',
+                      color: '#fff',
+                      fontSize: 13,
+                      lineHeight: 1.5,
+                      border: mine ? 'none' : '1px solid rgba(255,255,255,0.07)',
+                    }}
+                  >
+                    {displayChatMessageText(m.text)}
+                  </div>
+                  <div style={{ fontSize: 9.5, color: '#3A5070', marginTop: 2, textAlign: mine ? 'right' : 'left' }}>{fmtTime(m.created_at || '')}</div>
+                </>
+              )
+
+              if (hasSessionActionRow) {
+                return (
+                  <div key={m.id} style={{ width: '100%', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', flexDirection: mine ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 5 }}>
+                      {!mine && displayOther && i === 0 && (
+                        <div
+                          className={grad(displayOther.id)}
+                          style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: 7,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            color: '#fff',
+                            flexShrink: 0,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          {normalizeLogoImage(displayOther.logo) ? (
+                            <img src={normalizeLogoImage(displayOther.logo) || ''} alt={displayOther.name} style={{ width: '100%', height: '100%', objectFit: 'cover' as const }} />
+                          ) : (
+                            logoInitials(displayOther.name)
+                          )}
+                        </div>
+                      )}
+                      {!mine && i > 0 && <div style={{ width: 26, flexShrink: 0 }} />}
+                      <div style={{ maxWidth: '88%', minWidth: 0, flex: 1 }}>{bubbleBlock}</div>
+                    </div>
+                    {sessionActionRow}
+                  </div>
+                )
+              }
+
               return (
-                <div key={m.id} style={{ display:'flex', flexDirection:mine?'row-reverse':'row', alignItems:'flex-end', gap:5, marginBottom:4 }}>
-                  {!mine && displayOther && i === 0 && <div className={grad(displayOther.id)} style={{ width:26, height:26, borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'#fff', flexShrink:0, overflow:'hidden' }}>
-                    {normalizeLogoImage(displayOther.logo)
-                      ? <img src={normalizeLogoImage(displayOther.logo) || ''} alt={displayOther.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
-                      : logoInitials(displayOther.name)}
-                  </div>}
-                  {!mine && i > 0 && <div style={{ width:26, flexShrink:0 }} />}
-                  <div style={{ maxWidth:'72%' }}>
-                    <div style={{ padding:'8px 11px', borderRadius:mine?'14px 14px 4px 14px':'14px 14px 14px 4px', background:mine?'#1E7EF7':'#1A2D47', color:'#fff', fontSize:13, lineHeight:1.5, border:mine?'none':'1px solid rgba(255,255,255,0.07)' }}>{displayChatMessageText(m.text)}</div>
-                    {showPendingInviteActions && (
-                      <div style={{ display:'flex', gap:6, marginTop:6 }}>
-                        <button
-                          type="button"
-                          className="btn btn-green btn-sm"
-                          style={{ flex:1, padding:'6px 8px' }}
-                          disabled={sessionInviteBusyId === m.id}
-                          onClick={() => { void handleSessionInviteAction(m, 'accept') }}
-                        >
-                          {sessionInviteBusyId === m.id ? 'Joining...' : 'Accept'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          style={{ flex:1, padding:'6px 8px' }}
-                          disabled={sessionInviteBusyId === m.id}
-                          onClick={() => { void handleSessionInviteAction(m, 'decline') }}
-                        >
-                          Decline
-                        </button>
-                      </div>
-                    )}
-                    {showAcceptedState && (
-                      <div style={{ display:'flex', gap:6, marginTop:6 }}>
-                        <button
-                          type="button"
-                          className="btn btn-green btn-sm"
-                          style={{ flex:1, padding:'6px 8px', opacity:0.9, cursor:'default' }}
-                          disabled
-                        >
-                          Accepted
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          style={{ flex:1, padding:'6px 8px', opacity:0.6, cursor:'default' }}
-                          disabled
-                        >
-                          Decline
-                        </button>
-                      </div>
-                    )}
-                    {showDeclinedState && (
-                      <div style={{ display:'flex', gap:6, marginTop:6 }}>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          style={{ flex:1, padding:'6px 8px', opacity:0.6, cursor:'default' }}
-                          disabled
-                        >
-                          Accept
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-red btn-sm"
-                          style={{ flex:1, padding:'6px 8px', opacity:0.9, cursor:'default' }}
-                          disabled
-                        >
-                          Declined
-                        </button>
-                      </div>
-                    )}
-                    <div style={{ fontSize:9.5, color:'#3A5070', marginTop:2, textAlign:mine?'right':'left' }}>{fmtTime(m.created_at || '')}</div>
+                <div key={m.id} style={{ display: 'flex', flexDirection: mine ? 'row-reverse' : 'row', alignItems: 'flex-end', gap: 5, marginBottom: 4 }}>
+                  {!mine && displayOther && i === 0 && (
+                    <div className={grad(displayOther.id)} style={{ width: 26, height: 26, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800, color: '#fff', flexShrink: 0, overflow: 'hidden' }}>
+                      {normalizeLogoImage(displayOther.logo) ? <img src={normalizeLogoImage(displayOther.logo) || ''} alt={displayOther.name} style={{ width: '100%', height: '100%', objectFit: 'cover' as const }} /> : logoInitials(displayOther.name)}
+                    </div>
+                  )}
+                  {!mine && i > 0 && <div style={{ width: 26, flexShrink: 0 }} />}
+                  <div style={{ maxWidth: '72%' }}>
+                    {bubbleBlock}
                   </div>
                 </div>
               )
