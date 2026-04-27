@@ -203,7 +203,10 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const [filter, setFilter] = useState('All')
   const [search, setSearch] = useState('')
   const [saved, setSaved] = useState<Set<string>>(new Set())
+  /** Chat partners + formal connections — drives connection-post feed & discover exclusions. */
   const [conns, setConns] = useState<Set<string>>(new Set())
+  /** Formal `connections` rows only — drives Connect / Disconnect / Connected tab (matches Profile). */
+  const [linkedBizIds, setLinkedBizIds] = useState<Set<string>>(new Set())
   const [connectionPosts, setConnectionPosts] = useState<Array<{
     id: string
     business_id: string
@@ -277,35 +280,37 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       }
 
       if (!active) return
-      const connIds = new Set<string>()
+      const linkedIds = new Set<string>()
       ;((connsRes.data as any[]) || []).forEach((c: any) => {
         if (!ownBizId) return
         const otherId = otherConnectionBusinessId(
           { from_biz_id: c.from_biz_id, to_biz_id: c.to_biz_id },
           ownBizId,
         )
-        if (otherId && normalizeUuid(otherId) !== normalizeUuid(ownBizId)) connIds.add(normalizeUuid(otherId))
+        if (otherId && normalizeUuid(otherId) !== normalizeUuid(ownBizId)) linkedIds.add(normalizeUuid(otherId))
       })
+      const mergedPeerIds = new Set<string>(linkedIds)
       ;((chatsRes.data as any[]) || []).forEach((c: any) => {
         if (!ownBizId) return
         const otherId = otherChatParticipantId(
           { participant_a: c.participant_a, participant_b: c.participant_b },
           ownBizId,
         )
-        if (otherId && normalizeUuid(otherId) !== normalizeUuid(ownBizId)) connIds.add(normalizeUuid(otherId))
+        if (otherId && normalizeUuid(otherId) !== normalizeUuid(ownBizId)) mergedPeerIds.add(normalizeUuid(otherId))
       })
       let nextList = (businesses || []).filter(
         (b) => normalizeUuid(b.id) !== normalizeUuid(ownBizId || ''),
       ) as Business[]
       const inFeed = new Set(nextList.map((b) => normalizeUuid(b.id)))
-      const missingConn = [...connIds].filter((id) => id && !inFeed.has(id))
+      const missingConn = [...mergedPeerIds].filter((id) => id && !inFeed.has(id))
       if (missingConn.length) {
         const extra = await fetchBusinessProfilesByIds(FEED_BUSINESS_SELECT, missingConn)
         nextList = [...nextList, ...extra.filter((b) => normalizeUuid(b.id) !== normalizeUuid(ownBizId || ''))]
       }
       setList(nextList)
       setSaved(new Set((savedRows || []).map((s: any) => s.business_id)))
-      setConns(connIds)
+      setLinkedBizIds(linkedIds)
+      setConns(mergedPeerIds)
       setLoading(false)
       try {
         sessionStorage.setItem(cacheKey, JSON.stringify({ t: Date.now(), rows: nextList }))
@@ -471,7 +476,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
   const discoverBase = list.filter((b) => !conns.has(normalizeUuid(b.id)))
   const exploreBase = list
-  const connectedBase = list.filter((b) => conns.has(normalizeUuid(b.id)))
+  const connectedBase = list.filter((b) => linkedBizIds.has(normalizeUuid(b.id)))
   const source = feedView === 'connected' ? connectedBase : feedView === 'explore' ? exploreBase : []
 
   const items = source.filter((b) => {
@@ -631,22 +636,39 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
   const doConnect = async (b: Business) => {
     if (!myBiz) { toast('Create a business profile first', 'info'); return }
-    if (conns.has(normalizeUuid(b.id))) {
+    const peer = normalizeUuid(b.id)
+    if (linkedBizIds.has(peer)) {
       const r = await deleteConnectionBetween(myBiz.id, b.id)
       if (r.ok === false) { toast('Failed to disconnect: ' + r.error, 'error'); return }
+      setLinkedBizIds((s) => {
+        const next = new Set(s)
+        next.delete(peer)
+        return next
+      })
       setConns((s) => {
         const next = new Set(s)
-        next.delete(normalizeUuid(b.id))
+        next.delete(peer)
         return next
       })
       toast('Disconnected from ' + b.name)
       return
     }
     const { error: connErr } = await sb.from('connections').insert({ from_biz_id: myBiz.id, to_biz_id: b.id })
-    if (connErr) { toast('Failed to connect: ' + connErr.message, 'error'); return }
+    if (connErr) {
+      const msg = (connErr.message || '').toLowerCase()
+      if (msg.includes('duplicate') || msg.includes('unique')) {
+        setLinkedBizIds((s) => new Set([...s, peer]))
+        setConns((s) => new Set([...s, peer]))
+        toast('Already connected with ' + b.name, 'info')
+        return
+      }
+      toast('Failed to connect: ' + connErr.message, 'error')
+      return
+    }
     const { error: chatErr } = await sb.rpc('get_or_create_chat', { biz_a: myBiz.id, biz_b: b.id })
     if (chatErr) { toast('Connected, but chat setup failed', 'info') }
-    setConns((s) => new Set([...s, normalizeUuid(b.id)]))
+    setLinkedBizIds((s) => new Set([...s, peer]))
+    setConns((s) => new Set([...s, peer]))
     toast('Connected with ' + b.name + '!')
   }
 
@@ -790,7 +812,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                           {suggestedBiz.length > 0 ? (
                             <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
                               {suggestedBiz.map((b) => {
-                                const isConn = conns.has(normalizeUuid(b.id))
+                                const isConn = linkedBizIds.has(normalizeUuid(b.id))
                                 const logoSrc = normalizeLogoImage(b.logo) || normalizeLogoImage(b.logo_url)
                                 const bizName = cleanDisplayText(b.name) || 'Business'
                                 return (
@@ -915,7 +937,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
 
           {items.map(b => {
             const isSaved = saved.has(b.id)
-            const isConn = conns.has(normalizeUuid(b.id))
+            const isConn = linkedBizIds.has(normalizeUuid(b.id))
             const bizName = cleanDisplayText(b.name) || 'Business'
             const bizIndustry = cleanDisplayText(b.industry) || 'Other'
             const bizCity = cleanDisplayText(b.city)
