@@ -342,8 +342,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       const country = (myBiz?.country || '').trim().toLowerCase()
       const { data: sessData } = await sb.auth.getSession()
       const token = sessData.session?.access_token || ''
+      // Refresh in background — cron also updates news; never block paint on RSS/scrape latency.
       if (token) {
-        await fetch(`${SUPABASE_URL}/functions/v1/news-agent-refresh`, {
+        void fetch(`${SUPABASE_URL}/functions/v1/news-agent-refresh`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -354,25 +355,28 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         }).catch(() => undefined)
       }
 
-      const { data: globalRows } = await sb
+      const newsSelect =
+        'id,scope,city,country,title,summary,full_text,source_name,article_url,image_url,industry,published_at' as const
+      const globalQ = sb
         .from('news_cards')
-        .select('id,scope,city,country,title,summary,full_text,source_name,article_url,image_url,industry,published_at')
+        .select(newsSelect)
         .eq('scope', 'global')
         .order('published_at', { ascending: false })
         .limit(20)
+      const localQ =
+        city && country
+          ? sb
+              .from('news_cards')
+              .select(newsSelect)
+              .eq('scope', 'local')
+              .eq('city', city)
+              .eq('country', country)
+              .order('published_at', { ascending: false })
+              .limit(20)
+          : Promise.resolve({ data: [] as NewsCard[] })
 
-      let localRows: NewsCard[] = []
-      if (city && country) {
-        const { data } = await sb
-          .from('news_cards')
-          .select('id,scope,city,country,title,summary,full_text,source_name,article_url,image_url,industry,published_at')
-          .eq('scope', 'local')
-          .eq('city', city)
-          .eq('country', country)
-          .order('published_at', { ascending: false })
-          .limit(20)
-        localRows = (data as NewsCard[]) || []
-      }
+      const [{ data: globalRows }, { data: localData }] = await Promise.all([globalQ, localQ])
+      const localRows = localData ?? []
 
       if (!active) return
       const map = new Map<string, NewsCard>()
