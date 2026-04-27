@@ -873,7 +873,7 @@ function conferenceIceServers(): RTCIceServer[] {
 }
 
 export function ConferencePage() {
-const { myBiz, toast } = useApp()
+const { myBiz, toast, tab } = useApp()
 const [confs, setConfs] = useState<Conference[]>([])
 const [loading, setLoading] = useState(true)
 const [view, setView] = useState<'list'|'book'|'create'>('list')
@@ -882,6 +882,26 @@ const [connections, setConnections] = useState<Business[]>([])
 const [inviteModalConf, setInviteModalConf] = useState<Conference | null>(null)
 const [sendingInviteTo, setSendingInviteTo] = useState<string | null>(null)
 const [inviteAllBusy, setInviteAllBusy] = useState(false)
+
+const loadMyConnections = useCallback(async (): Promise<Business[]> => {
+  if (!myBiz?.id) return []
+  const { data: connRows, error } = await sb
+    .from('connections')
+    .select('from_biz_id,to_biz_id')
+    .or(`from_biz_id.eq.${myBiz.id},to_biz_id.eq.${myBiz.id}`)
+  if (error || !connRows?.length) return []
+  const ids = Array.from(
+    new Set(
+      connRows
+        .map((c) => otherConnectionBusinessId(c, myBiz.id))
+        .filter((id): id is string => !!id && normalizeUuid(id) !== normalizeUuid(myBiz.id)),
+    ),
+  )
+  if (!ids.length) return []
+  const connBiz = await fetchBusinessProfilesByIds(CONNECTIONS_CARD_SELECT, ids)
+  const list = [...connBiz].sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }))
+  return list
+}, [myBiz?.id])
 
 const load = useCallback(async () => {
   let usedCache = false
@@ -912,39 +932,37 @@ const load = useCallback(async () => {
 
 useEffect(() => { load() }, [load])
 
+/** Refresh whenever Connect tab is shown so new Feed connections appear in Invite modal. */
 useEffect(() => {
-  if (!myBiz?.id) {
-    setConnections([])
-    return
-  }
+  if (tab !== 'conference' || !myBiz?.id) return
   let cancelled = false
   void (async () => {
-    const { data: connRows, error } = await sb
-      .from('connections')
-      .select('from_biz_id,to_biz_id')
-      .or(`from_biz_id.eq.${myBiz.id},to_biz_id.eq.${myBiz.id}`)
-    if (cancelled || error || !connRows?.length) {
-      if (!cancelled) setConnections([])
-      return
-    }
-    const ids = Array.from(
-      new Set(
-        connRows
-          .map((c) => otherConnectionBusinessId(c, myBiz.id))
-          .filter((id): id is string => !!id && normalizeUuid(id) !== normalizeUuid(myBiz.id)),
-      ),
-    )
-    if (!ids.length) {
-      if (!cancelled) setConnections([])
-      return
-    }
-    const connBiz = await fetchBusinessProfilesByIds(CONNECTIONS_CARD_SELECT, ids)
-    if (!cancelled) setConnections(connBiz)
+    const rows = await loadMyConnections()
+    if (!cancelled) setConnections(rows)
   })()
   return () => {
     cancelled = true
   }
-}, [myBiz?.id])
+}, [tab, myBiz?.id, loadMyConnections])
+
+/** When opening Invite connections, reload connections + session attendees from DB (fresh filter). */
+useEffect(() => {
+  const confId = inviteModalConf?.id
+  if (!confId || !myBiz?.id) return
+  let cancelled = false
+  void (async () => {
+    const [{ data: confFresh }, connRows] = await Promise.all([
+      sb.from('conferences').select('*,conference_attendees(business_id)').eq('id', confId).single(),
+      loadMyConnections(),
+    ])
+    if (cancelled) return
+    if (confFresh) setInviteModalConf(confFresh as Conference)
+    setConnections(connRows)
+  })()
+  return () => {
+    cancelled = true
+  }
+}, [inviteModalConf?.id, myBiz?.id, loadMyConnections])
 
 useEffect(() => {
 const ch = sb
@@ -1009,8 +1027,10 @@ const ensureChat = async (a: string, b: string) => {
 const inviteableForModal =
   inviteModalConf && myBiz
     ? connections.filter((b) => {
-        const att = new Set((inviteModalConf.conference_attendees || []).map((a: { business_id: string }) => a.business_id))
-        return b.id !== myBiz.id && !att.has(b.id)
+        const att = new Set(
+          (inviteModalConf.conference_attendees || []).map((a: { business_id: string }) => normalizeUuid(a.business_id)),
+        )
+        return normalizeUuid(b.id) !== normalizeUuid(myBiz.id) && !att.has(normalizeUuid(b.id))
       })
     : []
 
