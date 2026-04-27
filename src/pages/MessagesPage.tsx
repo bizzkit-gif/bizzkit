@@ -70,13 +70,38 @@ type ParsedConferenceInvite = {
   timeLabel?: string
 }
 
+/** Conference id embedded in DM invite (works even if prefix is not at char 0). */
+function extractConferenceInviteIdFromRaw(text: string): string | undefined {
+  const trimmed = text.trim().replace(/^\uFEFF/, '')
+  const m = trimmed.match(
+    /\[CONF_SESSION_INVITE\]:([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})(?::(?:accepted|declined))?(?=\s|$)/i,
+  )
+  return m?.[1]
+}
+
+function inviteTerminalState(text: string): 'accepted' | 'declined' | null {
+  const lower = text.toLowerCase()
+  if (lower.includes('you accepted this invite')) return 'accepted'
+  if (lower.includes('you declined this invite')) return 'declined'
+  if (/\[CONF_SESSION_INVITE\]:[a-f0-9-]{36}:accepted\b/i.test(text)) return 'accepted'
+  if (/\[CONF_SESSION_INVITE\]:[a-f0-9-]{36}:declined\b/i.test(text)) return 'declined'
+  return null
+}
+
+function isLikelyPendingSessionInviteBody(text: string): boolean {
+  const lower = text.toLowerCase()
+  if (!lower.includes('accept or decline below')) return false
+  if (!lower.includes('invited you to join')) return false
+  return true
+}
+
 function parseConferenceInviteMessage(text: string | null | undefined): ParsedConferenceInvite | null {
-  const raw = typeof text === 'string' ? text.trim() : ''
+  const raw = typeof text === 'string' ? text.trim().replace(/^\uFEFF/, '') : ''
   if (!raw) return null
 
   const prefix = `${CONFERENCE_SESSION_INVITE_MARKER}:`
   if (raw.startsWith(prefix)) {
-    const rest = raw.slice(prefix.length)
+    const rest = raw.slice(prefix.length).replace(/^\s+/, '')
     const firstToken = /^(\S+)/.exec(rest)?.[1] || ''
     if (!firstToken) return null
     // Standard UUID + optional :accepted | :declined (single token)
@@ -614,8 +639,12 @@ function ChatView({
     !!incomingCallPeer && !videoCallOpen && !!displayOther && displayOther.id === incomingCallPeer.id
 
   const handleSessionInviteAction = async (m: Msg, action: 'accept' | 'decline') => {
-    if (m.sender_id === myId) return
-    const parsed = parseConferenceInviteMessage(m.text)
+    if (normalizeUuid(m.sender_id) === normalizeUuid(myId)) return
+    let parsed = parseConferenceInviteMessage(m.text)
+    if (!parsed && isLikelyPendingSessionInviteBody(m.text)) {
+      const cid = extractConferenceInviteIdFromRaw(m.text)
+      if (cid) parsed = { conferenceId: cid, state: 'pending' }
+    }
     if (!parsed) return
     if (sessionInviteBusyId) return
     setSessionInviteBusyId(m.id)
@@ -794,12 +823,20 @@ function ChatView({
               <span style={{ fontSize:9.5, color:'#3A5070', background:'#152236', padding:'3px 9px', borderRadius:9, fontWeight:600 }}>{new Date(g.msgs[0]?.created_at || 0).toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' })}</span>
             </div>
             {g.msgs.map((m, i) => {
-              const mine = m.sender_id === myId
+              const mine = normalizeUuid(m.sender_id) === normalizeUuid(myId)
               const sessionInvite = parseConferenceInviteMessage(m.text)
-              const canRespondToInvite = !mine && !!sessionInvite
-              const showPendingInviteActions = canRespondToInvite && sessionInvite?.state === 'pending'
-              const showAcceptedState = canRespondToInvite && sessionInvite?.state === 'accepted'
-              const showDeclinedState = canRespondToInvite && sessionInvite?.state === 'declined'
+              const terminal = inviteTerminalState(m.text)
+              const inviteId = extractConferenceInviteIdFromRaw(m.text)
+              const showPendingInviteActions =
+                !mine &&
+                terminal == null &&
+                (sessionInvite?.state === 'pending' ||
+                  (isLikelyPendingSessionInviteBody(m.text) &&
+                    !!inviteId &&
+                    sessionInvite?.state !== 'accepted' &&
+                    sessionInvite?.state !== 'declined'))
+              const showAcceptedState = !mine && (terminal === 'accepted' || sessionInvite?.state === 'accepted')
+              const showDeclinedState = !mine && (terminal === 'declined' || sessionInvite?.state === 'declined')
               const hasSessionActionRow = showPendingInviteActions || showAcceptedState || showDeclinedState
 
               const inviteButtonStyle = { flex: 1, minHeight: 44, padding: '10px 12px', fontSize: 14, fontWeight: 700 } as const
