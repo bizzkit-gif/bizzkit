@@ -1,12 +1,26 @@
-import React, { useLayoutEffect } from 'react'
+import React, { useLayoutEffect, useEffect, lazy, Suspense } from 'react'
 import { useApp } from './context/ctx'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import AuthPage from './pages/AuthPage'
-import FeedPage from './pages/FeedPage'
-import MessagesPage from './pages/MessagesPage'
-import { ProfilePage, ConferencePage, GoRandomPage, TrustPage, KycFormPage } from './pages/OtherPages'
-import LegalPage from './pages/LegalPage'
-import NotificationSettingsPage from './pages/NotificationSettingsPage'
+
+/** Code-split screens so first paint downloads a smaller JS bundle; each tab loads on demand. */
+const AuthPage = lazy(() => import('./pages/AuthPage'))
+const FeedPage = lazy(() => import('./pages/FeedPage'))
+const MessagesPage = lazy(() => import('./pages/MessagesPage'))
+const ProfilePage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.ProfilePage })))
+const ConferencePage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.ConferencePage })))
+const GoRandomPage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.GoRandomPage })))
+const TrustPage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.TrustPage })))
+const KycFormPage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.KycFormPage })))
+const LegalPage = lazy(() => import('./pages/LegalPage'))
+const NotificationSettingsPage = lazy(() => import('./pages/NotificationSettingsPage'))
+
+function TabLoading() {
+  return (
+    <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 220, padding: 24 }}>
+      <div className="spinner" aria-hidden />
+    </div>
+  )
+}
 
 const NAV = [
   { id:'feed',       icon:'🏠', label:'Home'    },
@@ -99,6 +113,11 @@ function HomeSessionBootChrome() {
 export default function App() {
   const { user, loading, bootLikelyAuthed, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
 
+  /** Warm the Home chunk right after session resolves so Feed suspends for less time. */
+  useEffect(() => {
+    if (!loading && user) void import('./pages/FeedPage')
+  }, [loading, user])
+
   useLayoutEffect(() => {
     if (!loading) {
       const splash = document.getElementById('bk-pwa-splash')
@@ -144,13 +163,19 @@ export default function App() {
   const viewBiz = (id: string) => { setViewId(id); setPrevTab(tab); setTab('profile') }
   const openChat = (id: string) => { setChatWith(id); setPrevTab(tab); setTab('messages') }
 
-  if (!user) return (
-    <div className="shell">
-      <div className="screen-area">
-        <div className="screen"><AuthPage /></div>
+  if (!user) {
+    return (
+      <div className="shell">
+        <div className="screen-area">
+          <div className="screen">
+            <Suspense fallback={<TabLoading />}>
+              <AuthPage />
+            </Suspense>
+          </div>
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   const screen = () => {
     if (tab==='feed')       return <FeedPage onView={viewBiz} />
@@ -169,7 +194,9 @@ export default function App() {
     <div className="shell">
       <div className="screen-area">
         <ErrorBoundary key={tab + (viewId || '')}>
-          <div className={`screen${tab === 'random' || tab === 'messages' ? ' screen-fit' : ''}`}>{screen()}</div>
+          <Suspense fallback={<TabLoading />}>
+            <div className={`screen${tab === 'random' || tab === 'messages' ? ' screen-fit' : ''}`}>{screen()}</div>
+          </Suspense>
         </ErrorBoundary>
       </div>
       <MainBottomNav />
