@@ -10,17 +10,5 @@ export default defineConfig({
     strictPort: true,
     open: true,
   },
-  build: {
-    outDir: 'dist',
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return
-          if (id.includes('@supabase') || id.includes('supabase-js')) return 'supabase'
-          if (id.includes('react-dom') || id.includes('node_modules/react/')) return 'react-vendor'
-        },
-      },
-    },
-    chunkSizeWarningLimit: 600,
-  },
+  build: { outDir: 'dist' },
 })

@@ -1,10 +1,10 @@
-import React, { useLayoutEffect, useEffect, lazy, Suspense } from 'react'
+import React, { useLayoutEffect, lazy, Suspense } from 'react'
 import { useApp } from './context/ctx'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import AuthPage from './pages/AuthPage'
+/** Home/Feed stays eager — lazy-loading it added an extra round-trip before first paint (felt slower). */
+import FeedPage from './pages/FeedPage'
 
-/** Code-split screens so first paint downloads a smaller JS bundle; each tab loads on demand. */
-const AuthPage = lazy(() => import('./pages/AuthPage'))
-const FeedPage = lazy(() => import('./pages/FeedPage'))
 const MessagesPage = lazy(() => import('./pages/MessagesPage'))
 const ProfilePage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.ProfilePage })))
 const ConferencePage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.ConferencePage })))
@@ -113,11 +113,6 @@ function HomeSessionBootChrome() {
 export default function App() {
   const { user, loading, bootLikelyAuthed, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
 
-  /** Warm the Home chunk right after session resolves so Feed suspends for less time. */
-  useEffect(() => {
-    if (!loading && user) void import('./pages/FeedPage')
-  }, [loading, user])
-
   useLayoutEffect(() => {
     if (!loading) {
       const splash = document.getElementById('bk-pwa-splash')
@@ -168,9 +163,7 @@ export default function App() {
       <div className="shell">
         <div className="screen-area">
           <div className="screen">
-            <Suspense fallback={<TabLoading />}>
-              <AuthPage />
-            </Suspense>
+            <AuthPage />
           </div>
         </div>
       </div>
