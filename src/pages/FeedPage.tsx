@@ -2,11 +2,17 @@ import React, { useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import { sb, SUPABASE_ANON_KEY, SUPABASE_URL, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid, deleteConnectionBetween } from '../lib/db'
 import { useApp } from '../context/ctx'
 
-/** Narrow columns + product fields — faster than `*,products(*)`. */
+/** Narrow columns + product fields — faster than `*,products(*)`. `updated_at` drives recent-first Explore + Home suggestions. */
 const FEED_BUSINESS_SELECT =
-  'id,name,tagline,industry,city,country,type,logo,logo_url,kyc_verified,trust_score,products(id,name,emoji,price,category)'
+  'id,name,tagline,industry,city,country,type,logo,logo_url,kyc_verified,trust_score,updated_at,created_at,products(id,name,emoji,price,category)'
 
-const FEED_CACHE_PREFIX = 'bizzkit.feed.v2.'
+const businessRecencyTs = (b: Business): number => {
+  const raw = b.updated_at || b.created_at || ''
+  const t = Date.parse(raw)
+  return Number.isFinite(t) ? t : 0
+}
+
+const FEED_CACHE_PREFIX = 'bizzkit.feed.v3.'
 const FEED_CACHE_MS = 120_000
 
 type NewsCard = {
@@ -587,13 +593,21 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const discoverBase = list.filter((b) => !conns.has(normalizeUuid(b.id)))
   const exploreBase = list
   const connectedBase = list.filter((b) => linkedBizIds.has(normalizeUuid(b.id)))
-  const source = feedView === 'connected' ? connectedBase : feedView === 'explore' ? exploreBase : []
 
-  const items = source.filter((b) => {
-    const mf = filter === 'All' || b.industry === filter
-    const ms = matchesSearchText(businessSearchBlob(b), search)
-    return mf && ms
-  })
+  const items = useMemo(() => {
+    const src =
+      feedView === 'connected' ? connectedBase : feedView === 'explore' ? exploreBase : []
+    const filtered = src.filter((b) => {
+      const mf = filter === 'All' || b.industry === filter
+      const ms = matchesSearchText(businessSearchBlob(b), search)
+      return mf && ms
+    })
+    /** Explore: newest profiles first so new joiners are discoverable (trust-only ordering buried them at the end). */
+    if (feedView === 'explore') {
+      return [...filtered].sort((a, b) => businessRecencyTs(b) - businessRecencyTs(a))
+    }
+    return filtered
+  }, [feedView, exploreBase, connectedBase, filter, search])
 
   const trending = exploreBase.filter((b) => {
     const mf = filter === 'All' || b.industry === filter
@@ -610,13 +624,16 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     const textMatch = matchesSearchText(blob, search)
     return industryOk && textMatch
   })
-  const suggestedConnections = discoverBase
-    .filter((b) => {
+  const suggestedConnections = useMemo(() => {
+    const discover = list.filter((b) => !conns.has(normalizeUuid(b.id)))
+    const filtered = discover.filter((b) => {
       const mf = filter === 'All' || b.industry === filter
       const ms = matchesSearchText(businessSearchBlob(b), search)
       return mf && ms
     })
-    .slice(0, 3)
+    const sorted = [...filtered].sort((a, b) => businessRecencyTs(b) - businessRecencyTs(a))
+    return sorted.slice(0, 5)
+  }, [list, conns, filter, search])
 
   const mixedFeedItems = useMemo<FeedMixedItem[]>(() => {
     const postItems: FeedMixedItem[] = connectionFeedPosts.map((post) => ({
@@ -917,7 +934,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                         <div key={item.id} style={{ background:'#152236', borderRadius:14, padding:13, border:'1px solid rgba(255,255,255,0.1)', marginBottom:10 }}>
                           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, marginBottom:10 }}>
                             <h4 style={{ margin:0, fontSize:13.5, fontFamily:'Syne, sans-serif' }}>Suggested Connections</h4>
-                            <span style={{ fontSize:10, color:'#7A92B0' }}>Based on your feed</span>
+                            <span style={{ fontSize:10, color:'#7A92B0' }}>Recently joined</span>
                           </div>
                           {suggestedBiz.length > 0 ? (
                             <div style={{ display:'flex', flexDirection:'column', gap:8 }}>

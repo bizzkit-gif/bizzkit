@@ -45,7 +45,9 @@ serve(async (req: Request) => {
 
     const { data: rows, error } = await admin
       .from("businesses")
-      .select("id,owner_id,name,tagline,industry,city,country,type,logo,logo_url,kyc_verified,trust_score,products(id,name,emoji,price,category)")
+      .select(
+        "id,owner_id,name,tagline,industry,city,country,type,logo,logo_url,kyc_verified,trust_score,updated_at,created_at,products(id,name,emoji,price,category)",
+      )
       .order("trust_score", { ascending: false });
     if (error) {
       return new Response(JSON.stringify({ error: error.message }), {
