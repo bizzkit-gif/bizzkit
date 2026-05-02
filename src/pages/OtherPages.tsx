@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { sb, Business, Product, Conference, INDUSTRIES, COUNTRIES, TIMES, grad, getLogo, tier, tierIcon, tierColor, indEmoji, fmtDate, uploadImage, getLastUploadError, RANDOM_CALL_INVITE_MARKER, randomCallInviteMessageRinging, markLatestRandomCallInviteAsMissed, conferenceSessionInviteMessage, notifySessionExternal, fetchBusinessProfilesByIds, otherConnectionBusinessId, normalizeUuid, deleteConnectionBetween, DELETE_ACCOUNT_CONFIRM, deleteMyAccount } from '../lib/db'
 import { clearEmailHasProfile } from '../lib/profileLocal'
 import { PeerVideoCall } from '../components/PeerVideoCall'
@@ -128,7 +128,8 @@ useEffect(() => {
 }, [biz?.id, tab, myBiz?.id])
 
 useEffect(() => {
-if (isOwn) { setBiz(myBiz); setLoading(false); return }
+if (isOwn) return
+setLoading(true)
 sb.from('businesses').select('*,products(id,name,emoji,price,category)').eq('id', viewId!).single().then(({ data }) => { setBiz(data); setLoading(false) })
 if (myBiz && viewId) {
   void sb
@@ -170,6 +171,13 @@ useEffect(() => {
   loadConnections()
 }, [biz?.id])
 
+/** Own profile: sync from context before paint so the tab never flashes a blank spinner when `myBiz` is already loaded. */
+useLayoutEffect(() => {
+  if (!isOwn) return
+  setBiz(myBiz ?? null)
+  setLoading(!myBiz)
+}, [isOwn, myBiz])
+
 const doConnect = async () => {
 if (!myBiz || !biz) { toast('Create a profile first', 'info'); return }
 if (isConn) {
@@ -191,7 +199,7 @@ if (isOwn) {
 toast('Connected with ' + biz.name + '!')
 }
 
-if (loading) return <div style={{ display:'flex', justifyContent:'center', padding:'60px 0' }}><div className="spinner" /></div>
+if (loading && !(isOwn && myBiz)) return <div style={{ display:'flex', justifyContent:'center', padding:'60px 0' }}><div className="spinner" /></div>
 if (editing && isOwn) return <BizForm existing={biz||undefined} onSaved={async (created) => {
   setEditing(false)
   if (created) setBiz(created)
@@ -213,7 +221,16 @@ if (isOwn && !myBiz) return <BizForm onSaved={async (created) => {
     toast('Profile saved. Loading your profile…', 'info', 3200)
   }
 }} />
-if (!biz) return <div style={{ padding:'80px 20px', textAlign:'center', color:'#7A92B0' }}>Business not found</div>
+if (!biz) {
+  if (isOwn && myBiz) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '48px 0' }}>
+        <div className="spinner" aria-hidden />
+      </div>
+    )
+  }
+  return <div style={{ padding:'80px 20px', textAlign:'center', color:'#7A92B0' }}>Business not found</div>
+}
 const logoRenderUrl = (() => {
   const imageValue = normalizeLogoImage(biz.logo) || normalizeLogoImage(biz.logo_url)
   if (!imageValue) return null
@@ -1114,7 +1131,6 @@ return (
 <div style={{ fontSize:12, color:'rgba(255,255,255,0.6)', lineHeight:1.5, marginBottom:13 }}>Book a curated group session with up to 8 verified business owners.</div>
 <button className="btn btn-blue btn-sm" onClick={() => setView('book')}>📅 Book Session</button>
 </div>
-{loading && <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>}
 {!loading && myConfs.length > 0 && (
 <><div className="sec-hd"><h3>My Sessions</h3></div>
 {myConfs.map(c => <ConfCard key={c.id} c={c} myBizId={myBiz?.id} joined onLeave={() => leave(c)} onGoLive={() => { void openLive(c) }} onClose={() => closeConference(c)} onInviteConnections={() => setInviteModalConf(c)} />)}

@@ -1,22 +1,22 @@
-import React, { useLayoutEffect, lazy, Suspense } from 'react'
+import React, { useEffect, useLayoutEffect, lazy, Suspense } from 'react'
 import { useApp } from './context/ctx'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import AuthPage from './pages/AuthPage'
-/** Home/Feed stays eager — lazy-loading it added an extra round-trip before first paint (felt slower). */
 import FeedPage from './pages/FeedPage'
 
 const MessagesPage = lazy(() => import('./pages/MessagesPage'))
+const LegalPage = lazy(() => import('./pages/LegalPage'))
+const NotificationSettingsPage = lazy(() => import('./pages/NotificationSettingsPage'))
 const ProfilePage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.ProfilePage })))
 const ConferencePage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.ConferencePage })))
 const GoRandomPage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.GoRandomPage })))
 const TrustPage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.TrustPage })))
 const KycFormPage = lazy(() => import('./pages/OtherPages').then((m) => ({ default: m.KycFormPage })))
-const LegalPage = lazy(() => import('./pages/LegalPage'))
-const NotificationSettingsPage = lazy(() => import('./pages/NotificationSettingsPage'))
 
+/** Thin fallback — tab chunks are prefetched after login so this rarely shows. */
 function TabLoading() {
   return (
-    <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 220, padding: 24 }}>
+    <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 160, padding: 20 }}>
       <div className="spinner" aria-hidden />
     </div>
   )
@@ -112,6 +112,28 @@ function HomeSessionBootChrome() {
 
 export default function App() {
   const { user, loading, bootLikelyAuthed, tab, setTab, prevTab, setPrevTab, viewId, setViewId, chatWith, setChatWith, unread, toastMsg, toastType, toastVisible, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
+
+  /** Warm secondary-route chunks after login so tab switches stay instant without shipping everything in the first bundle. */
+  useEffect(() => {
+    if (!user) return
+    const load = () => {
+      void import('./pages/MessagesPage')
+      void import('./pages/LegalPage')
+      void import('./pages/NotificationSettingsPage')
+      void import('./pages/OtherPages')
+    }
+    let idleId: number | undefined
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    if (typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(load, { timeout: 2000 })
+    } else {
+      timeoutId = setTimeout(load, 180)
+    }
+    return () => {
+      if (idleId !== undefined && typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleId)
+      if (timeoutId !== undefined) clearTimeout(timeoutId)
+    }
+  }, [user])
 
   useLayoutEffect(() => {
     if (!loading) {

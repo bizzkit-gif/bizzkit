@@ -73,6 +73,27 @@ input[type='checkbox'],input[type='radio']{font-family:'DM Sans',sans-serif;-web
 .spinner{width:36px;height:36px;border:3px solid #152236;border-top-color:#1E7EF7;border-radius:50%;animation:spin .8s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg)}}
 
+/* Feed / list loading skeletons */
+@keyframes bk-shimmer{
+  0%{background-position:200% 0}
+  100%{background-position:-200% 0}
+}
+.bk-skel{
+  background:linear-gradient(90deg,#152236 0%,#1e3555 42%,#152236 88%);
+  background-size:200% 100%;
+  animation:bk-shimmer 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion:reduce){
+  .bk-skel{animation:none;background:#152236}
+}
+.bk-skel-avatar{width:36px;height:36px;border-radius:10px;flex-shrink:0}
+.bk-skel-line{height:10px;border-radius:5px}
+.bk-skel-line-md{height:12px;border-radius:6px}
+.bk-skel-line-lg{height:14px;border-radius:6px}
+.bk-skel-media{height:118px;border-radius:10px}
+.bk-skel-row{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.06)}
+.bk-skel-card{background:#152236;border-radius:14px;padding:13px;border:1px solid rgba(255,255,255,0.07);margin-bottom:10px}
+
 /* ── SHARED ────────────────────────────────────── */
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 10px;}
 .logo-txt{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;color:#1E7EF7;}

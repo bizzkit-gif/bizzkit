@@ -211,6 +211,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
 
   const loadChats = useCallback(async () => {
     if (!myBiz) return
+    setLoading(true)
     try {
       const { data: rows, error: rowsErr } = await sb
         .from('chats')
@@ -439,7 +440,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
         <div className="page-title">Messages</div>
         <div style={{ fontSize:12, color:'#7A92B0' }}>{chats.length} conversation{chats.length!==1?'s':''}</div>
       </div>
-      {loading && <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>}
+      {loading && chats.length === 0 && <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>}
       {!loading && chats.length === 0 && <div className="empty"><div className="ico">💬</div><h3>No messages yet</h3><p>Connect with businesses in the Feed to start conversations.</p></div>}
       {chats.map(c => {
         const peer = c.other_biz ?? fallbackPeer(otherChatParticipantId(c, myBiz.id))

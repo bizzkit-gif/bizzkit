@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useMemo } from 'react'
 import { sb, SUPABASE_ANON_KEY, SUPABASE_URL, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid, deleteConnectionBetween } from '../lib/db'
 import { useApp } from '../context/ctx'
 
@@ -196,6 +196,58 @@ function buildNewsTeaserOneLiner(n: NewsCard): string {
   return `${oneLine.slice(0, 117).trimEnd()}...`
 }
 
+function FeedPostCardSkeleton() {
+  return (
+    <div className="bk-skel-card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10 }}>
+        <div className="bk-skel bk-skel-avatar" aria-hidden />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="bk-skel bk-skel-line-lg" style={{ width: '58%', marginBottom: 8 }} aria-hidden />
+          <div className="bk-skel bk-skel-line" style={{ width: '32%' }} aria-hidden />
+        </div>
+      </div>
+      <div className="bk-skel bk-skel-line-md" style={{ width: '94%', marginBottom: 8 }} aria-hidden />
+      <div className="bk-skel bk-skel-line-md" style={{ width: '72%', marginBottom: 10 }} aria-hidden />
+      <div className="bk-skel bk-skel-media" aria-hidden />
+    </div>
+  )
+}
+
+function FeedBizRowSkeleton() {
+  return (
+    <div className="bk-skel-row" aria-hidden>
+      <div className="bk-skel bk-skel-avatar" style={{ width: 46, height: 46, borderRadius: 13 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="bk-skel bk-skel-line-md" style={{ width: '64%', marginBottom: 8 }} />
+        <div className="bk-skel bk-skel-line" style={{ width: '48%' }} />
+      </div>
+    </div>
+  )
+}
+
+function HomeFeedSkeleton({ mode }: { mode: 'feed' | 'explore' | 'connected' }) {
+  const title = mode === 'feed' ? 'Home feed' : mode === 'connected' ? 'Connected Businesses' : 'Explore businesses'
+  const postCards = mode === 'feed' ? 4 : 0
+  const bizRows = mode === 'feed' ? 0 : 6
+
+  return (
+    <div aria-busy="true" aria-live="polite" aria-label="Loading feed">
+      <div className="sec-hd">
+        <h3>{title}</h3>
+        <span className="see-all bk-skel" style={{ display: 'inline-block', width: 52, height: 11, borderRadius: 5, verticalAlign: 'middle' }} aria-hidden />
+      </div>
+      <div style={{ padding: '0 16px', marginBottom: 14 }}>
+        {Array.from({ length: postCards }, (_, i) => (
+          <FeedPostCardSkeleton key={`p-${i}`} />
+        ))}
+        {Array.from({ length: bizRows }, (_, i) => (
+          <FeedBizRowSkeleton key={`b-${i}`} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
@@ -226,14 +278,45 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   /** Same source as bottom-nav Chat badge: updates on Realtime (includes Random call invite messages). */
   const bellBadgeCount = Math.max(unread, pendingRandomCallFromBusinessId ? 1 : 0, pendingChatCallFromBusinessId ? 1 : 0)
 
+  /** Hydrate feed list from sessionStorage before paint so returning to Home rarely flashes an empty spinner. */
+  useLayoutEffect(() => {
+    const ownBizId = myBiz?.id ?? null
+    const cacheKey = `${FEED_CACHE_PREFIX}${user?.id ?? 'anon'}:${ownBizId ?? 'none'}`
+    try {
+      const raw = sessionStorage.getItem(cacheKey)
+      if (raw) {
+        const parsed = JSON.parse(raw) as { t: number; rows: Business[] }
+        if (Date.now() - parsed.t < FEED_CACHE_MS && parsed.rows?.length) {
+          setList(parsed.rows)
+          setLoading(false)
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [user?.id, myBiz?.id])
+
   useEffect(() => {
     let active = true
     const loadFeedData = async () => {
-      let ownBizId = myBiz?.id || null
-      if (!ownBizId && user?.id) {
-        const { data: ownBiz } = await sb.from('businesses').select('id').eq('owner_id', user.id).single()
-        ownBizId = ownBiz?.id || null
-      }
+      /** Cold-start: run session, own-biz id, primary table read, and saved list in one round — previously these were partially sequential. */
+      const ownBizP: Promise<string | null> = myBiz?.id
+        ? Promise.resolve(myBiz.id)
+        : !user?.id
+          ? Promise.resolve(null)
+          : sb
+              .from('businesses')
+              .select('id')
+              .eq('owner_id', user.id)
+              .single()
+              .then(({ data }) => data?.id ?? null)
+
+      const savedP = user?.id
+        ? sb.from('saved_businesses').select('business_id').eq('user_id', user.id)
+        : Promise.resolve({ data: [] as { business_id: string }[] })
+
+      /** Session + own biz + saved only — avoids a heavy full-table `businesses` scan in parallel when we will load the feed from the edge function (same rows, less DB work). */
+      const [sessWrap, ownBizId, savedWrap] = await Promise.all([sb.auth.getSession(), ownBizP, savedP])
 
       const cacheKey = `${FEED_CACHE_PREFIX}${user?.id ?? 'anon'}:${ownBizId ?? 'none'}`
       let usedCache = false
@@ -252,32 +335,59 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       }
       if (!usedCache) setLoading(true)
 
-      const [businessesRes, { data: savedRows }, connsRes, chatsRes] = await Promise.all([
-        sb.from('businesses').select(FEED_BUSINESS_SELECT).order('trust_score', { ascending: false }),
-        user?.id ? sb.from('saved_businesses').select('business_id').eq('user_id', user.id) : Promise.resolve({ data: [] as any[] }),
-        ownBizId ? sb.from('connections').select('from_biz_id,to_biz_id').or(`from_biz_id.eq.${ownBizId},to_biz_id.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] }),
-        ownBizId ? sb.from('chats').select('participant_a,participant_b').or(`participant_a.eq.${ownBizId},participant_b.eq.${ownBizId}`) : Promise.resolve({ data: [] as any[] })
+      const token = sessWrap.data.session?.access_token || ''
+      const edgeP: Promise<Response | null> = token
+        ? fetch(`${SUPABASE_URL}/functions/v1/list-feed-businesses`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              apikey: SUPABASE_ANON_KEY,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({}),
+          }).catch(() => null)
+        : Promise.resolve(null)
+
+      /** When logged out, load the public businesses table in parallel with chats/connections (no duplicate query when using edge). */
+      const businessesTableP = !token
+        ? sb.from('businesses').select(FEED_BUSINESS_SELECT).order('trust_score', { ascending: false })
+        : Promise.resolve({ data: [] as Business[] | null, error: null })
+
+      const [connsRes, chatsRes, edgeRes, businessesTableRes] = await Promise.all([
+        ownBizId
+          ? sb
+              .from('connections')
+              .select('from_biz_id,to_biz_id')
+              .or(`from_biz_id.eq.${ownBizId},to_biz_id.eq.${ownBizId}`)
+          : Promise.resolve({ data: [] as { from_biz_id: string; to_biz_id: string }[] }),
+        ownBizId
+          ? sb
+              .from('chats')
+              .select('participant_a,participant_b')
+              .or(`participant_a.eq.${ownBizId},participant_b.eq.${ownBizId}`)
+          : Promise.resolve({ data: [] as { participant_a: string; participant_b: string }[] }),
+        edgeP,
+        businessesTableP,
       ])
-      let businesses = (businessesRes.data || []) as Business[]
-      const { data: sessData } = await sb.auth.getSession()
-      const token = sessData.session?.access_token || ''
-      if (token) {
-        const fallbackRes = await fetch(`${SUPABASE_URL}/functions/v1/list-feed-businesses`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            apikey: SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({}),
-        })
-        if (fallbackRes.ok) {
-          const body = (await fallbackRes.json().catch(() => ({}))) as { rows?: Business[] }
-          businesses = (body.rows || []) as Business[]
-        }
-      } else if (!businesses.length || !!businessesRes.error) {
-        businesses = []
+
+      let businesses: Business[] = []
+      if (token && edgeRes !== null && edgeRes.ok) {
+        const body = (await edgeRes.json().catch(() => ({}))) as { rows?: Business[] }
+        businesses = (body.rows || []) as Business[]
+      } else if (token) {
+        const { data, error } = await sb
+          .from('businesses')
+          .select(FEED_BUSINESS_SELECT)
+          .order('trust_score', { ascending: false })
+        businesses = (data || []) as Business[]
+        if (error && businesses.length === 0) businesses = []
+      } else {
+        const br = businessesTableRes as { data: Business[] | null; error: { message?: string } | null }
+        businesses = (br.data || []) as Business[]
+        if (!businesses.length || br.error) businesses = []
       }
+
+      const savedRows = (savedWrap as { data: { business_id: string }[] | null }).data ?? []
 
       if (!active) return
       const linkedIds = new Set<string>()
@@ -735,8 +845,8 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         ))}
       </div>
 
-      {loading ? (
-        <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}><div className="spinner" /></div>
+      {loading && list.length === 0 ? (
+        <HomeFeedSkeleton mode={feedView} />
       ) : (
         <>
           {feedView === 'feed' && (
