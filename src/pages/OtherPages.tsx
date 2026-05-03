@@ -147,7 +147,8 @@ if (myBiz && viewId) {
       setIsConn(hit)
     })
 }
-}, [isOwn, viewId, myBiz])
+/** `myBiz` object identity changes when context refreshes — only re-fetch when viewer’s business id or viewed profile id changes. */
+}, [isOwn, viewId, myBiz?.id])
 
 useEffect(() => {
   if (!biz?.id) { setConnections([]); return }
@@ -171,12 +172,22 @@ useEffect(() => {
   loadConnections()
 }, [biz?.id])
 
-/** Own profile: sync from context before paint so the tab never flashes a blank spinner when `myBiz` is already loaded. */
+/** Own profile: sync from context — depend on id/updated_at so an unrelated `myBiz` reference refresh does not reset state. */
 useLayoutEffect(() => {
   if (!isOwn) return
-  setBiz(myBiz ?? null)
   setLoading(!myBiz)
-}, [isOwn, myBiz])
+  setBiz((prev) => {
+    if (!myBiz) return null
+    if (
+      prev &&
+      normalizeUuid(prev.id) === normalizeUuid(myBiz.id) &&
+      prev.updated_at === myBiz.updated_at
+    ) {
+      return prev
+    }
+    return myBiz
+  })
+}, [isOwn, myBiz?.id, myBiz?.updated_at])
 
 const doConnect = async () => {
 if (!myBiz || !biz) { toast('Create a profile first', 'info'); return }
