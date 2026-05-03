@@ -143,7 +143,16 @@ function parseConferenceInviteMessage(text: string | null | undefined): ParsedCo
 }
 
 export default function MessagesPage({ openWith, onClearOpen }: { openWith?: string|null; onClearOpen?: () => void }) {
-  const { myBiz, setUnread, toast, pendingChatCallFromBusinessId, clearPendingChatCall, setTab } = useApp()
+  const { myBiz, setUnread, toast, pendingChatCallFromBusinessId, clearPendingChatCall, setTab, setViewId, setPrevTab } = useApp()
+
+  const openPeerProfile = useCallback(
+    (businessId: string) => {
+      setViewId(businessId)
+      setPrevTab('messages')
+      setTab('profile')
+    },
+    [setTab, setPrevTab, setViewId],
+  )
   const [chats, setChats] = useState<Chat[]>([])
   const [activeId, setActiveId] = useState<string|null>(null)
   /** When user picks a thread while `openWith` RPC is still resolving, do not overwrite their choice. */
@@ -374,6 +383,7 @@ export default function MessagesPage({ openWith, onClearOpen }: { openWith?: str
         incomingCallPeer={incomingCallPeer}
         onClearIncomingCall={() => setIncomingCallPeer(null)}
         onOpenConference={() => setTab('conference')}
+        onOpenPeerProfile={openPeerProfile}
         videoCallOpen={videoCallOpen}
         setVideoCallOpen={setVideoCallOpen}
       />
@@ -492,6 +502,7 @@ function ChatView({
   incomingCallPeer,
   onClearIncomingCall,
   onOpenConference,
+  onOpenPeerProfile,
   videoCallOpen,
   setVideoCallOpen,
 }: {
@@ -508,6 +519,7 @@ function ChatView({
   incomingCallPeer: Business | null
   onClearIncomingCall: () => void
   onOpenConference: () => void
+  onOpenPeerProfile: (businessId: string) => void
   videoCallOpen: boolean
   setVideoCallOpen: (v: boolean) => void
 }) {
@@ -800,19 +812,58 @@ function ChatView({
         </div>
       )}
       <div style={{ display:'flex', alignItems:'center', gap:11, padding:'11px 15px 9px', borderBottom:'1px solid rgba(255,255,255,0.07)', flexShrink:0 }}>
-        <button onClick={onBack} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:20, cursor:'pointer', padding:'2px 5px', flexShrink:0 }}>←</button>
-        {displayOther && <div className={grad(displayOther.id)} style={{ width:38, height:38, borderRadius:11, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Syne, sans-serif', fontWeight:800, fontSize:14, color:'#fff', flexShrink:0, overflow:'hidden', position:'relative' }}>
-          {normalizeLogoImage(displayOther.logo)
-            ? <img src={normalizeLogoImage(displayOther.logo) || ''} alt={displayOther.name} style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
-            : logoInitials(displayOther.name)}
-        </div>}
-        <div style={{ flex:1, minWidth:0 }}>
+        <button type="button" onClick={onBack} style={{ background:'none', border:'none', color:'#7A92B0', fontSize:20, cursor:'pointer', padding:'2px 5px', flexShrink:0 }}>←</button>
+        {displayOther && (
+          <button
+            type="button"
+            onClick={() => onOpenPeerProfile(displayOther.id)}
+            className={grad(displayOther.id)}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 11,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontFamily: 'Syne, sans-serif',
+              fontWeight: 800,
+              fontSize: 14,
+              color: '#fff',
+              flexShrink: 0,
+              overflow: 'hidden',
+              position: 'relative',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+            }}
+            aria-label={`Open ${displayOther.name} profile`}
+          >
+            {normalizeLogoImage(displayOther.logo)
+              ? <img src={normalizeLogoImage(displayOther.logo) || ''} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' as const }} />
+              : logoInitials(displayOther.name)}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => displayOther && onOpenPeerProfile(displayOther.id)}
+          disabled={!displayOther?.id}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            textAlign: 'left',
+            cursor: displayOther?.id ? 'pointer' : 'default',
+          }}
+          aria-label={displayOther ? `Open ${displayOther.name} profile` : undefined}
+        >
           <div style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
-            <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{displayOther?.name||'Chat'}</div>
+            <div style={{ fontFamily:'Syne, sans-serif', fontSize:14, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'#fff' }}>{displayOther?.name||'Chat'}</div>
             {isOtherOnline && <div style={{ width:8, height:8, borderRadius:'50%', background:'#00D46A', flexShrink:0 }} />}
           </div>
           <div style={{ fontSize:10.5, color:'#7A92B0' }}>{displayOther?.industry} · {displayOther?.city}</div>
-        </div>
+        </button>
         <div className="icon-btn" style={{ width:34, height:34, fontSize:14 }} onClick={startCall}>📞</div>
       </div>
 
