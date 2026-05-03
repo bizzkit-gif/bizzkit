@@ -54,6 +54,40 @@ export function peekPersistedAuthPresent(): boolean {
   return looksLikeSession(localStorage.getItem(key)) || looksLikeSession(sessionStorage.getItem(key))
 }
 
+/** Same persistence blob as Supabase — avoids awaiting `getSession()` for Edge auth headers on hot paths. */
+export function peekPersistedAccessToken(): string | null {
+  if (typeof window === 'undefined') return null
+  const key = supabaseAuthStorageKey()
+  const raw =
+    getAuthStorageMode() === 'session'
+      ? sessionStorage.getItem(key)
+      : localStorage.getItem(key) ?? sessionStorage.getItem(key)
+  if (!raw) return null
+  try {
+    const o = JSON.parse(raw) as Record<string, unknown>
+    const at = o.access_token
+    return typeof at === 'string' && at.length > 0 ? at : null
+  } catch {
+    return null
+  }
+}
+
+/** Decoded JWT `sub` (auth user id) from persisted access_token — for optimistic shell before `getSession()` finishes. */
+export function peekJwtSub(): string | null {
+  const token = peekPersistedAccessToken()
+  if (!token) return null
+  try {
+    const parts = token.split('.')
+    if (parts.length < 2) return null
+    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    while (base64.length % 4) base64 += '='
+    const p = JSON.parse(atob(base64)) as { sub?: string }
+    return typeof p.sub === 'string' ? p.sub : null
+  } catch {
+    return null
+  }
+}
+
 /** Supabase auth persistence: mirrors default behaviour with a switchable backing store. */
 const authStorageAdapter: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> = {
   getItem(key: string): string | null {

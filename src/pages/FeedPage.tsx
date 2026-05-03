@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo } from 'react'
-import { sb, SUPABASE_ANON_KEY, SUPABASE_URL, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid, deleteConnectionBetween } from '../lib/db'
+import { sb, SUPABASE_ANON_KEY, SUPABASE_URL, Business, INDUSTRIES, grad, fmtDate, fetchBusinessProfilesByIds, otherConnectionBusinessId, otherChatParticipantId, normalizeUuid, deleteConnectionBetween, peekPersistedAccessToken } from '../lib/db'
 import { useApp } from '../context/ctx'
 
 /** Narrow columns + product fields — faster than `*,products(*)`. `updated_at` drives recent-first Explore + Home suggestions. */
@@ -14,6 +14,9 @@ const businessRecencyTs = (b: Business): number => {
 
 const FEED_CACHE_PREFIX = 'bizzkit.feed.v3.'
 const FEED_CACHE_MS = 120_000
+/** Logged-in users: survives full reload / new tab for instant first paint (network refreshes after). */
+const FEED_LS_PREFIX = 'bizzkit.feed.persist.v1.'
+const FEED_LS_MS = 86_400_000 // 24h
 
 type NewsCard = {
   id: string
@@ -255,12 +258,11 @@ function HomeFeedSkeleton({ mode }: { mode: 'feed' | 'explore' | 'connected' }) 
 }
 
 export default function FeedPage({ onView }: { onView: (id: string) => void }) {
-  const { myBiz, user, toast, setTab, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
+  const { myBiz, user, toast, setTab, setPrevTab, tab, setChatWith, unread, pendingRandomCallFromBusinessId, pendingChatCallFromBusinessId } = useApp()
   const [list, setList] = useState<Business[]>([])
   const [feedView, setFeedView] = useState<'feed'|'explore'|'connected'>('feed')
   const [filter, setFilter] = useState('All')
   const [search, setSearch] = useState('')
-  const [saved, setSaved] = useState<Set<string>>(new Set())
   /** Chat partners + formal connections — drives connection-post feed & discover exclusions. */
   const [conns, setConns] = useState<Set<string>>(new Set())
   /** Formal `connections` rows only — drives Connect / Disconnect / Connected tab (matches Profile). */
@@ -284,28 +286,39 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
   /** Same source as bottom-nav Chat badge: updates on Realtime (includes Random call invite messages). */
   const bellBadgeCount = Math.max(unread, pendingRandomCallFromBusinessId ? 1 : 0, pendingChatCallFromBusinessId ? 1 : 0)
 
-  /** Hydrate feed list from sessionStorage before paint so returning to Home rarely flashes an empty spinner. */
+  /** Hydrate from session cache, then durable local cache — before paint when possible. */
   useLayoutEffect(() => {
     const ownBizId = myBiz?.id ?? null
-    const cacheKey = `${FEED_CACHE_PREFIX}${user?.id ?? 'anon'}:${ownBizId ?? 'none'}`
-    try {
-      const raw = sessionStorage.getItem(cacheKey)
-      if (raw) {
+    const uid = user?.id ?? 'anon'
+    const cacheKey = `${FEED_CACHE_PREFIX}${uid}:${ownBizId ?? 'none'}`
+    const tryHydrate = (raw: string | null, maxAge: number): boolean => {
+      if (!raw) return false
+      try {
         const parsed = JSON.parse(raw) as { t: number; rows: Business[] }
-        if (Date.now() - parsed.t < FEED_CACHE_MS && parsed.rows?.length) {
+        if (Date.now() - parsed.t < maxAge && parsed.rows?.length) {
           setList(parsed.rows)
           setLoading(false)
+          return true
         }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
+      return false
+    }
+    if (tryHydrate(sessionStorage.getItem(cacheKey), FEED_CACHE_MS)) return
+    if (user?.id) {
+      try {
+        tryHydrate(localStorage.getItem(`${FEED_LS_PREFIX}${user.id}`), FEED_LS_MS)
+      } catch {
+        /* ignore */
+      }
     }
   }, [user?.id, myBiz?.id])
 
   useEffect(() => {
     let active = true
     const loadFeedData = async () => {
-      /** Cold-start: run session, own-biz id, primary table read, and saved list in one round — previously these were partially sequential. */
+      /** Cold-start: own-biz id + businesses list in parallel. */
       const ownBizP: Promise<string | null> = myBiz?.id
         ? Promise.resolve(myBiz.id)
         : !user?.id
@@ -317,12 +330,9 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
               .single()
               .then(({ data }) => data?.id ?? null)
 
-      const savedP = user?.id
-        ? sb.from('saved_businesses').select('business_id').eq('user_id', user.id)
-        : Promise.resolve({ data: [] as { business_id: string }[] })
+      const businessesP = sb.from('businesses').select(FEED_BUSINESS_SELECT).order('trust_score', { ascending: false })
 
-      /** Session + own biz + saved only — avoids a heavy full-table `businesses` scan in parallel when we will load the feed from the edge function (same rows, less DB work). */
-      const [sessWrap, ownBizId, savedWrap] = await Promise.all([sb.auth.getSession(), ownBizP, savedP])
+      const [ownBizId, businessesRes] = await Promise.all([ownBizP, businessesP])
 
       const cacheKey = `${FEED_CACHE_PREFIX}${user?.id ?? 'anon'}:${ownBizId ?? 'none'}`
       let usedCache = false
@@ -341,25 +351,7 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
       }
       if (!usedCache) setLoading(true)
 
-      const token = sessWrap.data.session?.access_token || ''
-      const edgeP: Promise<Response | null> = token
-        ? fetch(`${SUPABASE_URL}/functions/v1/list-feed-businesses`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              apikey: SUPABASE_ANON_KEY,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({}),
-          }).catch(() => null)
-        : Promise.resolve(null)
-
-      /** When logged out, load the public businesses table in parallel with chats/connections (no duplicate query when using edge). */
-      const businessesTableP = !token
-        ? sb.from('businesses').select(FEED_BUSINESS_SELECT).order('trust_score', { ascending: false })
-        : Promise.resolve({ data: [] as Business[] | null, error: null })
-
-      const [connsRes, chatsRes, edgeRes, businessesTableRes] = await Promise.all([
+      const [connsRes, chatsRes] = await Promise.all([
         ownBizId
           ? sb
               .from('connections')
@@ -372,28 +364,10 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
               .select('participant_a,participant_b')
               .or(`participant_a.eq.${ownBizId},participant_b.eq.${ownBizId}`)
           : Promise.resolve({ data: [] as { participant_a: string; participant_b: string }[] }),
-        edgeP,
-        businessesTableP,
       ])
 
-      let businesses: Business[] = []
-      if (token && edgeRes !== null && edgeRes.ok) {
-        const body = (await edgeRes.json().catch(() => ({}))) as { rows?: Business[] }
-        businesses = (body.rows || []) as Business[]
-      } else if (token) {
-        const { data, error } = await sb
-          .from('businesses')
-          .select(FEED_BUSINESS_SELECT)
-          .order('trust_score', { ascending: false })
-        businesses = (data || []) as Business[]
-        if (error && businesses.length === 0) businesses = []
-      } else {
-        const br = businessesTableRes as { data: Business[] | null; error: { message?: string } | null }
-        businesses = (br.data || []) as Business[]
-        if (!businesses.length || br.error) businesses = []
-      }
-
-      const savedRows = (savedWrap as { data: { business_id: string }[] | null }).data ?? []
+      let businesses: Business[] = (businessesRes.data || []) as Business[]
+      if (businessesRes.error && businesses.length === 0) businesses = []
 
       if (!active) return
       const linkedIds = new Set<string>()
@@ -414,24 +388,70 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
         )
         if (otherId && normalizeUuid(otherId) !== normalizeUuid(ownBizId)) mergedPeerIds.add(normalizeUuid(otherId))
       })
-      let nextList = (businesses || []).filter(
-        (b) => normalizeUuid(b.id) !== normalizeUuid(ownBizId || ''),
-      ) as Business[]
-      const inFeed = new Set(nextList.map((b) => normalizeUuid(b.id)))
-      const missingConn = [...mergedPeerIds].filter((id) => id && !inFeed.has(id))
-      if (missingConn.length) {
-        const extra = await fetchBusinessProfilesByIds(FEED_BUSINESS_SELECT, missingConn)
-        nextList = [...nextList, ...extra.filter((b) => normalizeUuid(b.id) !== normalizeUuid(ownBizId || ''))]
+
+      const finalizeList = async (raw: Business[]): Promise<Business[]> => {
+        let nextList = (raw || []).filter(
+          (b) => normalizeUuid(b.id) !== normalizeUuid(ownBizId || ''),
+        ) as Business[]
+        const inFeed = new Set(nextList.map((b) => normalizeUuid(b.id)))
+        const missingConn = [...mergedPeerIds].filter((id) => id && !inFeed.has(id))
+        if (missingConn.length) {
+          const extra = await fetchBusinessProfilesByIds(FEED_BUSINESS_SELECT, missingConn)
+          nextList = [...nextList, ...extra.filter((b) => normalizeUuid(b.id) !== normalizeUuid(ownBizId || ''))]
+        }
+        return nextList
       }
+
+      const nextList = await finalizeList(businesses)
       setList(nextList)
-      setSaved(new Set((savedRows || []).map((s: any) => s.business_id)))
       setLinkedBizIds(linkedIds)
       setConns(mergedPeerIds)
       setLoading(false)
-      try {
-        sessionStorage.setItem(cacheKey, JSON.stringify({ t: Date.now(), rows: nextList }))
-      } catch {
-        /* quota / private mode */
+      const persistRows = (rows: Business[]) => {
+        const payload = JSON.stringify({ t: Date.now(), rows })
+        try {
+          sessionStorage.setItem(cacheKey, payload)
+        } catch {
+          /* quota */
+        }
+        try {
+          if (user?.id) localStorage.setItem(`${FEED_LS_PREFIX}${user.id}`, payload)
+        } catch {
+          /* quota / private mode */
+        }
+      }
+      persistRows(nextList)
+
+      /** Upgrade list when edge returns (owner-validated rows); does not block first paint. */
+      if (active) {
+        void (async () => {
+          try {
+            let tok = peekPersistedAccessToken()
+            if (!tok) {
+              const { data } = await sb.auth.getSession()
+              tok = data.session?.access_token || ''
+            }
+            if (!tok || !active) return
+            const edgeRes = await fetch(`${SUPABASE_URL}/functions/v1/list-feed-businesses`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${tok}`,
+                apikey: SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({}),
+            }).catch(() => null)
+            if (!active || !edgeRes || !edgeRes.ok) return
+            const body = (await edgeRes.json().catch(() => ({}))) as { rows?: Business[] }
+            const edgeRows = (body.rows || []) as Business[]
+            const upgraded = await finalizeList(edgeRows)
+            if (!active) return
+            setList(upgraded)
+            persistRows(upgraded)
+          } catch {
+            /* ignore */
+          }
+        })()
       }
     }
 
@@ -748,17 +768,22 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
     setLikesByPostId((prev) => ({ ...prev, [postId]: (prev[postId] || 0) + 1 }))
   }
 
-  const doSave = async (b: Business) => {
-    if (!user) { toast('Sign in to save', 'info'); return }
-    if (saved.has(b.id)) {
-      await sb.from('saved_businesses').delete().eq('user_id', user.id).eq('business_id', b.id)
-      setSaved(s => { const n = new Set(s); n.delete(b.id); return n })
-      toast('Removed from saved')
-    } else {
-      await sb.from('saved_businesses').insert({ user_id: user.id, business_id: b.id })
-      setSaved(s => new Set([...s, b.id]))
-      toast('Saved!')
+  const openMessageToBusiness = (peerBizId: string) => {
+    if (!user) {
+      toast('Sign in to message', 'info')
+      return
     }
+    if (!myBiz) {
+      toast('Create a business profile first', 'info')
+      return
+    }
+    if (normalizeUuid(peerBizId) === normalizeUuid(myBiz.id)) {
+      toast('This is your business', 'info')
+      return
+    }
+    setChatWith(peerBizId)
+    setPrevTab(tab)
+    setTab('messages')
   }
 
   const doConnect = async (b: Business) => {
@@ -1063,7 +1088,6 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
           )}
 
           {items.map(b => {
-            const isSaved = saved.has(b.id)
             const isConn = linkedBizIds.has(normalizeUuid(b.id))
             const bizName = cleanDisplayText(b.name) || 'Business'
             const bizIndustry = cleanDisplayText(b.industry) || 'Other'
@@ -1097,8 +1121,12 @@ export default function FeedPage({ onView }: { onView: (id: string) => void }) {
                   </div>
                 )}
                 <div style={{ display:'flex', gap:6, paddingTop:9, borderTop:'1px solid rgba(255,255,255,0.07)' }}>
-                  <button onClick={() => doSave(b)} style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:4, fontSize:11, fontWeight:600, color:isSaved?'#FF6B35':'#7A92B0', background:'none', border:'none', flex:1, padding:5, borderRadius:7, cursor:'pointer' }}>
-                    {isSaved ? '💾 Saved' : '🔖 Save'}
+                  <button
+                    type="button"
+                    onClick={() => openMessageToBusiness(b.id)}
+                    style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:4, fontSize:11, fontWeight:600, color:'#7A92B0', background:'none', border:'none', flex:1, padding:5, borderRadius:7, cursor:'pointer' }}
+                  >
+                    💬 Message
                   </button>
                   <button onClick={() => toast('RFQ sent to ' + b.name, 'info')} style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:4, fontSize:11, fontWeight:600, color:'#7A92B0', background:'none', border:'none', flex:1, padding:5, borderRadius:7, cursor:'pointer' }}>
                     📋 RFQ

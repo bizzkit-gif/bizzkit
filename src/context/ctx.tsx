@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
-import { sb, Business, RANDOM_CALL_INVITE_MARKER, CHAT_CALL_INVITE_MARKER, peekPersistedAuthPresent } from '../lib/db'
+import { sb, Business, RANDOM_CALL_INVITE_MARKER, CHAT_CALL_INVITE_MARKER, peekPersistedAuthPresent, peekJwtSub } from '../lib/db'
 import { setEmailHasProfile, clearEmailHasProfile } from '../lib/profileLocal'
 import { playNotificationTone, syncAppIconBadge, tryShowNativeNotification } from '../lib/notify'
 import { vibrateIfEnabled } from '../lib/notificationSettings'
@@ -167,9 +167,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const timeout = setTimeout(() => setLoading(false), 3000)
 
+    /** Paint main shell immediately when persisted JWT exists — full profile replaces when `getSession()` returns. */
+    const optimisticSub = peekJwtSub()
+    if (optimisticSub && peekPersistedAuthPresent()) {
+      setUser({ id: optimisticSub })
+      setLoading(false)
+      clearTimeout(timeout)
+    }
+
     sb.auth.getSession().then(({ data: { session } }) => {
       clearTimeout(timeout)
-      setUser(session?.user || null)
+      setUser(session?.user ?? null)
       setLoading(false)
     }).catch(() => {
       clearTimeout(timeout)
@@ -177,15 +185,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     })
 
     const { data: { subscription } } = sb.auth.onAuthStateChange((_e, session) => {
-      setUser(session?.user || null)
+      setUser(session?.user ?? null)
       if (!session) setMyBiz(null)
     })
     return () => { subscription.unsubscribe(); clearTimeout(timeout) }
   }, [])
 
   useEffect(() => {
-    if (user) refreshBiz()
-  }, [user])
+    if (!user) return
+    /** Let Home feed queries win first connection window on cold open */
+    const run = () => {
+      void refreshBiz()
+    }
+    let idleId: number | undefined
+    let tId: ReturnType<typeof setTimeout> | undefined
+    if (typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(run, { timeout: 600 })
+    } else {
+      tId = window.setTimeout(run, 120)
+    }
+    return () => {
+      if (idleId !== undefined && typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleId)
+      if (tId !== undefined) clearTimeout(tId)
+    }
+  }, [user, refreshBiz])
 
   useEffect(() => {
     if (!myBiz?.id) { setUnread(0); return }
