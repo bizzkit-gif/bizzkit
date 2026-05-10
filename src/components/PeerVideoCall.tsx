@@ -10,6 +10,42 @@ type LiveSignal = {
   payload?: unknown
 }
 
+/** Plain JSON for broadcast — RTCSessionDescription objects do not always stringify reliably across browsers. */
+function sessionDescriptionToInit(sd: RTCSessionDescription | RTCSessionDescriptionInit | null): RTCSessionDescriptionInit | null {
+  if (!sd) return null
+  const type = 'type' in sd ? sd.type : undefined
+  const sdp = 'sdp' in sd && typeof sd.sdp === 'string' ? sd.sdp : undefined
+  if (!type || sdp === undefined) return null
+  return { type, sdp }
+}
+
+/** Normalize Supabase broadcast envelopes vs flat LiveSignal (nested `payload` must not be confused with SDP body). */
+function parseLiveSignal(raw: unknown): LiveSignal | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+
+  const fromRecord = (x: Record<string, unknown>): LiveSignal | null => {
+    const t = x.type
+    if (t !== 'ready' && t !== 'offer' && t !== 'answer' && t !== 'ice' && t !== 'hangup') return null
+    const from = x.from
+    if (typeof from !== 'string' || from.length === 0) return null
+    return {
+      type: t,
+      from,
+      to: typeof x.to === 'string' ? x.to : undefined,
+      bizName: typeof x.bizName === 'string' ? x.bizName : undefined,
+      payload: x.payload,
+    }
+  }
+
+  const wrapped = o.payload
+  if (wrapped && typeof wrapped === 'object') {
+    const inner = fromRecord(wrapped as Record<string, unknown>)
+    if (inner) return inner
+  }
+  return fromRecord(o)
+}
+
 /** STUN + public TURN (helps symmetric NAT / mobile carriers). Optional Vite env can override TURN. */
 function buildIceServers(): RTCIceServer[] {
   const servers: RTCIceServer[] = [
@@ -83,10 +119,17 @@ export function PeerVideoCall({
   const sub = subtitleLine ?? `${other.industry} · ${other.city}`
   const hint = connectingHint ?? `Connecting… waiting for ${other.name}.`
 
-  const sendSignal = useCallback((sig: LiveSignal) => {
+  const sendSignal = useCallback(async (sig: LiveSignal) => {
     const ch = channelRef.current
     if (!ch) return
-    ch.send({ type: 'broadcast', event: 'signal', payload: sig })
+    try {
+      const result = await ch.send({ type: 'broadcast', event: 'signal', payload: sig })
+      if (result === 'error') {
+        setSignalingError('Call signaling failed to send. Check your connection and try again.')
+      }
+    } catch {
+      setSignalingError('Call signaling failed to send. Check your connection and try again.')
+    }
   }, [])
 
   const flushPendingIce = useCallback(async (pc: RTCPeerConnection) => {
@@ -130,17 +173,20 @@ export function PeerVideoCall({
       })
     }
     pc.onicecandidate = (e) => {
-      if (e.candidate) sendSignal({ type: 'ice', from: peerIdRef.current, to: '*', payload: e.candidate.toJSON(), bizName: myBiz.name })
+      if (e.candidate) void sendSignal({ type: 'ice', from: peerIdRef.current, to: '*', payload: e.candidate.toJSON(), bizName: myBiz.name })
     }
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' && !iceRestartAttemptedRef.current) {
+      if (pc.connectionState !== 'failed') return
+      if (!iceRestartAttemptedRef.current) {
         iceRestartAttemptedRef.current = true
         try {
           pc.restartIce()
         } catch {
           /* ignore */
         }
+        return
       }
+      setSignalingError('Connection failed. Try again or check Wi‑Fi / VPN.')
     }
     peerRef.current = pc
     return pc
@@ -159,7 +205,7 @@ export function PeerVideoCall({
       hangupHandledRef.current = true
       stopReadyPing()
       if (!fromRemote) {
-        sendSignal({ type: 'hangup', from: peerIdRef.current, bizName: myBiz.name })
+        void sendSignal({ type: 'hangup', from: peerIdRef.current, bizName: myBiz.name })
       }
       if (
         !remoteConnectedRef.current &&
@@ -202,9 +248,13 @@ export function PeerVideoCall({
 
         const safeChannelId = sanitizeRealtimeChannelId(signalingChannelId)
         const ch = sb
-          .channel(safeChannelId)
-          .on('broadcast', { event: 'signal' }, async ({ payload }: { payload: LiveSignal }) => {
-            const msg = payload
+          .channel(safeChannelId, {
+            config: {
+              broadcast: { ack: true },
+            },
+          })
+          .on('broadcast', { event: 'signal' }, async (envelope: unknown) => {
+            const msg = parseLiveSignal(envelope)
             if (!msg || msg.from === peerIdRef.current) return
 
             if (msg.type === 'hangup') {
@@ -219,8 +269,13 @@ export function PeerVideoCall({
                   const pc = createPeer()
                   const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
                   await pc.setLocalDescription(offer)
+                  const init = sessionDescriptionToInit(pc.localDescription)
+                  if (!init) {
+                    setStarting(false)
+                    return
+                  }
                   offerSentRef.current = true
-                  sendSignal({ type: 'offer', from: peerIdRef.current, payload: offer, bizName: myBiz.name })
+                  await sendSignal({ type: 'offer', from: peerIdRef.current, payload: init, bizName: myBiz.name })
                   setStarting(false)
                 } catch {
                   setStarting(false)
@@ -247,21 +302,27 @@ export function PeerVideoCall({
 
             if (msg.type === 'offer') {
               if (iAmOfferer) return
+              const sdp = msg.payload as RTCSessionDescriptionInit | undefined
+              if (!sdp?.sdp || !sdp.type) return
               const pc = createPeer()
-              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit))
+              await pc.setRemoteDescription(new RTCSessionDescription(sdp))
               await flushPendingIce(pc)
               const answer = await pc.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
               await pc.setLocalDescription(answer)
-              sendSignal({ type: 'answer', from: peerIdRef.current, payload: answer, bizName: myBiz.name })
+              const answerInit = sessionDescriptionToInit(pc.localDescription)
+              if (answerInit) await sendSignal({ type: 'answer', from: peerIdRef.current, payload: answerInit, bizName: myBiz.name })
               setStarting(false)
               return
             }
 
             if (msg.type === 'answer') {
               if (!iAmOfferer) return
+              const sdp = msg.payload as RTCSessionDescriptionInit | undefined
+              if (!sdp?.sdp || !sdp.type) return
               const pc = createPeer()
-              await pc.setRemoteDescription(new RTCSessionDescription(msg.payload as RTCSessionDescriptionInit))
+              await pc.setRemoteDescription(new RTCSessionDescription(sdp))
               await flushPendingIce(pc)
+              setStarting(false)
             }
           })
           .subscribe((status: string, err?: Error) => {
@@ -271,7 +332,7 @@ export function PeerVideoCall({
               iceRestartAttemptedRef.current = false
               stopReadyPing()
               readyIntervalRef.current = window.setInterval(() => {
-                sendSignal({ type: 'ready', from: peerIdRef.current, bizName: myBiz.name })
+                void sendSignal({ type: 'ready', from: peerIdRef.current, bizName: myBiz.name })
               }, 400)
               if (!iAmOfferer) {
                 setStarting(false)

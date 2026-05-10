@@ -1,8 +1,17 @@
 import { createClient } from '@supabase/supabase-js'
+import { DEFAULT_SUPABASE_ANON_KEY, DEFAULT_SUPABASE_URL } from './supabaseDefaults'
 
-// Keys hardcoded - no .env file needed
-export const SUPABASE_URL = 'https://ganberetmowmaidioryu.supabase.co'
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhbmJlcmV0bW93bWFpZGlvcnl1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTg5MzksImV4cCI6MjA4OTQ3NDkzOX0.5-mD0cFberNXOmSh8F0lItV6wbTJE0zHjCiPFAYfExE'
+function trimEnv(s: string | undefined): string {
+  return typeof s === 'string' ? s.trim() : ''
+}
+
+const envUrl = trimEnv(import.meta.env.VITE_SUPABASE_URL)
+const envKey = trimEnv(import.meta.env.VITE_SUPABASE_ANON_KEY)
+const useEnv = envUrl.length > 0 && envKey.length > 0
+
+/** Project API URL — from `VITE_SUPABASE_URL` when set, else legacy default. */
+export const SUPABASE_URL = useEnv ? envUrl : DEFAULT_SUPABASE_URL
+const SUPABASE_KEY = useEnv ? envKey : DEFAULT_SUPABASE_ANON_KEY
 /** Same as Supabase anon key — used for invoking Edge Functions from the browser. */
 export const SUPABASE_ANON_KEY = SUPABASE_KEY
 
